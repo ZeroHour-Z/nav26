@@ -1,0 +1,17 @@
+region_detector_node:
+  ros__parameters:
+    # 三区域多边形（map坐标系），格式：[x1, y1, x2, y2, x3, y3, ...]
+    battle_region_frame: map
+    # self_base_region: [-7.0, -4.0, -7.0, 4.0, -0.5, 4.0, -0.5, -4.0]
+    # central_highland_region: [-0.5, -4.0, -0.5, 4.0, 1.5, 4.0, 1.5, -4.0]
+    # enemy_base_region: [1.5, -4.0, 1.5, 4.0, 5.0, 4.0, 5.0, -4.0]
+
+    lookahead_distance: 1.2
+    publish_rate: 20.0
+    # fluctuate_region_1: [-0.6, -0.7, 0.9, -0.7, 0.9, -2.6, -0.6, -2.6]
+    fluctuate_region_1: [1.6, 1.0, 0.8, 1.0, 0.8, 2.0, 1.6, 2.0]
+    fluctuate_region_1_yaw: 1.57
+    fluctuate_region_2: [0.0]
+    fluctuate_region_2_yaw: 0.0
+    fluctuate_region_3: [0.0]
+    fluctuate_region_3_yaw: 0.0

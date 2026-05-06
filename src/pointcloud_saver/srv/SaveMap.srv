@@ -1,0 +1,11 @@
+# Request
+string filename                    # PCD文件名（空=自动时间戳命名）
+float32 voxel_size                 # 体素滤波大小（米），0=使用默认0.05
+bool apply_statistical_filter      # 是否应用统计离群点滤波
+---
+# Response
+bool success
+string message
+string saved_path
+int32 total_points
+int32 filtered_points

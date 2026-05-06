@@ -1,0 +1,220 @@
+# 追击与巡逻测试决策树
+# 功能说明：
+# 1. 追击模式：当 handler_node 设置 chase=true 时（电控状态为 attack/pursuit 且敌方位置有效），跟随 /chase_point 话题进行追击
+# 2. 巡逻模式：当 chase=false 时，在预设点位之间循环巡逻
+
+tree:
+  name: test_tree
+  root:
+    type: Selector
+    name: 主逻辑
+    params:
+      memory: false
+    children:
+    # supply：回到补给点（如需修改，替换下方 x/y/yaw）
+      - type: Sequence
+        name: supply_回补给点
+        params:
+          memory: true
+        children:
+          - type: ParamBoolCondition
+            name: supply状态?
+            params:
+              param: "supply"
+              expected: true
+              latched_ok: false
+          - type: PublishString
+            name: 发布supply
+            params:
+              topic: "/sentry_actions"
+              data: "SUPPLY"
+              publish_every_tick: false
+          - type: NavigateToPoseAction
+            name: 去补给点
+            params:
+              server_name: "navigate_to_pose"
+              frame_id: "map"
+              x: 3.85
+              y: 0.95
+              yaw: 0.0
+              timeout_s: 120
+
+      # ============ 追击分支 ============
+      - type: Sequence
+        name: 追击模式
+        params:
+          memory: true
+        children:
+          # 检查是否需要追击（正在追击中 或 chase参数为true）
+          - type: Selector
+            name: 追击条件检测
+            params:
+              memory: false
+            children:
+              - type: CheckBlackboard
+                name: 已在追击中?
+                params:
+                  key: "is_chasing"
+                  expected: true
+              - type: ParamBoolCondition
+                name: 追击参数触发?
+                params:
+                  param: "chase"
+                  expected: true
+                  latched_ok: false
+
+          # 标记进入追击状态
+          - type: SetBlackboard
+            name: 设置追击标记
+            params:
+              key: "is_chasing"
+              value: true
+
+          # 发布状态消息（可选，用于调试）
+          - type: PublishString
+            name: 发布追击状态
+            params:
+              topic: "/decision_state"
+              data: "CHASING"
+              publish_every_tick: false
+
+          # 并行执行：追击 + 等待追击结束信号
+          - type: Parallel
+            name: 追击执行
+            params:
+              policy: SuccessOnOne
+              synchronise: false
+            children:
+              # 跟随 /chase_point 进行导航追击
+              - type: ChaseDynamicPointAction
+                name: 追击敌方目标
+                params:
+                  server_name: "navigate_to_pose"
+                  topic: "/chase_point"
+                  min_target_delta: 0.25
+                  min_resend_interval_s: 0.35
+              # 等待 chase 参数变为 false（追击结束）
+              - type: WaitForParamBool
+                name: 等待追击结束
+                params:
+                  param: "chase"
+                  expected: false
+
+          # 清除追击标记
+          - type: SetBlackboard
+            name: 清除追击标记
+            params:
+              key: "is_chasing"
+              value: false
+
+          # 发布追击结束状态
+          - type: PublishString
+            name: 发布追击结束
+            params:
+              topic: "/decision_state"
+              data: "CHASE_ENDED"
+              publish_every_tick: false
+
+      # ============ 巡逻分支============
+      - type: Sequence
+        name: 巡逻模式
+        params:
+          memory: true
+        children:
+          # 检查是否需要巡逻（电控发送 patrol 状态）
+          - type: ParamBoolCondition
+            name: 巡逻参数触发?
+            params:
+              param: "patrol"
+              expected: true
+              latched_ok: false
+
+          # 发布巡逻状态
+          - type: PublishString
+            name: 发布巡逻状态
+            params:
+              topic: "/decision_state"
+              data: "PATROL"
+              publish_every_tick: false
+
+          - type: NavigateToPoseAction
+            name: 点1
+            params:
+              server_name: "navigate_to_pose"
+              frame_id: "map"
+              x: -1.77
+              y: 2.19
+              yaw: 0.0
+              timeout_s: 120
+              cancel_on_terminate: false
+              retry_on_failure: true
+          - type: Wait
+            name: 点1停留
+            params:
+              duration_s: 1.0
+          - type: NavigateToPoseAction
+            name: 点2
+            params:
+              server_name: "navigate_to_pose"
+              frame_id: "map"
+              x: -3.93
+              y: -1.35
+              yaw: 0.0
+              timeout_s: 120
+              cancel_on_terminate: false
+              retry_on_failure: true
+
+          # # 巡逻点2
+          # - type: NavigateToPoseAction
+          #   name: 巡逻点2
+          #   params:
+          #     server_name: "navigate_to_pose"
+          #     frame_id: "map"
+          #     x: 3.0
+          #     y: 0.0
+          #     yaw: 1.57
+          #     timeout_s: 60
+
+          # - type: Wait
+          #   name: 等待2
+          #   params:
+          #     duration_s: 1.0
+
+          # # 巡逻点3
+          # - type: NavigateToPoseAction
+          #   name: 巡逻点3
+          #   params:
+          #     server_name: "navigate_to_pose"
+          #     frame_id: "map"
+          #     x: 3.0
+          #     y: 3.0
+          #     yaw: 3.14
+          #     timeout_s: 60
+
+          # - type: Wait
+          #   name: 等待3
+          #   params:
+          #     duration_s: 1.0
+
+          # # 巡逻点4
+          # - type: NavigateToPoseAction
+          #   name: 巡逻点4
+          #   params:
+          #     server_name: "navigate_to_pose"
+          #     frame_id: "map"
+          #     x: 0.0
+          #     y: 3.0
+          #     yaw: -1.57
+          #     timeout_s: 60
+
+          # - type: Wait
+          #   name: 等待4
+          #   params:
+          #     duration_s: 1.0
+      
+      # 兜底分支：没有任何状态命中时，短等待后下一帧继续评估
+      # - type: Wait
+      #   name: 未匹配状态_空转
+      #   params:
+      #     duration_s: 0.2
+                  

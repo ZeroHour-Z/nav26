@@ -1,0 +1,56 @@
+global_velocity_controller:
+  ros__parameters:
+    map_frame: map
+    base_frame: base_link
+    odom_topic: /odom
+    path_topic: /plan
+    cmd_vel_topic: /cmd_vel
+    target_twist_map_topic: /target_twist_map
+    global_costmap_topic: "/global_costmap/costmap"
+
+    # PID gains
+    kp_xy: 1.0  # 提高P增益，更激进地追踪路径
+    ki_xy: 0.0
+    kd_xy: 0.0  # 降低D增益，减少抖动
+
+    kp_yaw: 0.0  # 陀螺模式下不控制航向
+    ki_yaw: 0.0
+    kd_yaw: 0.0
+
+    # Limits
+    max_vx: 1.0
+    max_vy: 1.0
+    max_wz: 1.0  # 提高到5.0，不限制陀螺角速度
+
+    anti_windup_integral_limit_xy: 0.5
+    anti_windup_integral_limit_yaw: 0.5
+
+    # Goal approach: deceleration zone to prevent overshoot on omni wheels
+    goal_decel_radius: 0.8        # 距终点此距离开始线性减速(m)（留足余量）
+    goal_min_speed_ratio: 0.12    # 减速区最低速度比例 (0~1)
+    goal_lock_duration: 1.0       # 到达后锁定零速持续时间(s)，防止PID反弹振荡
+
+    # 高频里程计位置预测（补偿 Odin1 TF 仅10Hz的延迟）
+    odom_highfreq_topic: /odin1/odometry_highfreq
+    pose_predict_enabled: true
+
+    # Anti-oscillation / deadbands
+    velocity_deadband: 0.02
+    yaw_deadband: 0.02
+    stop_speed_threshold: 0.04
+    stop_angular_threshold: 0.03
+
+    # Command rate limiting (non-symmetric: decel > accel to counter omni wheel roller slip)
+    cmd_accel_limit_linear: 2.0   # 加速率 m/s²
+    cmd_decel_limit_linear: 5.0   # 减速率 m/s²（全向轮需要更快制动）
+    cmd_accel_limit_angular: 4.0 
+
+    # Escape mode params
+    # escape_lethal_threshold: 100
+    escape_enter_cost_threshold: 99
+    escape_target_cost_threshold: 95        # 一直逃到free
+    escape_treat_unknown_as_lethal: false
+    escape_speed: 0.8
+    escape_goal_tolerance: 0.05
+    escape_max_radius_cells: 200
+    escape_enter_delay_s: 1.0
