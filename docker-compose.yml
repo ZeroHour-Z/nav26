@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     image: xjtu-nav26:humble
     container_name: xjtu-nav26
+    working_dir: /home/zerohour/xjtu_nav26
     network_mode: host
     ipc: host
     privileged: true
@@ -14,10 +15,47 @@ services:
       ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
       RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
       DISPLAY: ${DISPLAY:-:0}
+      XAUTHORITY: ${XAUTHORITY:-}
       LIBGL_ALWAYS_SOFTWARE: "1"
       QT_X11_NO_MITSHM: "1"
       VNC_PASSWORD: ${VNC_PASSWORD:-}
       VNC_TUNNEL_HOST: ${VNC_TUNNEL_HOST:-localhost}
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /run/user/1000:/run/user/1000:ro
       - ./log:/home/zerohour/xjtu_nav26/log
+
+  nav26-dev:
+    image: xjtu-nav26:humble
+    profiles: ["dev"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: xjtu-nav26-dev
+    working_dir: /home/zerohour/xjtu_nav26
+    network_mode: host
+    ipc: host
+    privileged: true
+    stdin_open: true
+    tty: true
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      DISPLAY: ${DISPLAY:-:0}
+      XAUTHORITY: ${XAUTHORITY:-}
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      QT_X11_NO_MITSHM: "1"
+      VNC_PASSWORD: ${VNC_PASSWORD:-}
+      VNC_TUNNEL_HOST: ${VNC_TUNNEL_HOST:-localhost}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /run/user/1000:/run/user/1000:ro
+      - .:/home/zerohour/xjtu_nav26
+      - nav26-build:/home/zerohour/xjtu_nav26/build
+      - nav26-install:/home/zerohour/xjtu_nav26/install
+      - ./log:/home/zerohour/xjtu_nav26/log
+    command: bash
+
+volumes:
+  nav26-build:
+  nav26-install:

@@ -12,26 +12,57 @@ docker compose build
 
 镜像名为 `xjtu-nav26:humble`。构建过程中会安装 ROS/Nav2/RViz/VNC 依赖，编译 Livox-SDK2，并执行项目根目录的 `./build.sh`。
 
+如果只是运行当前代码，使用默认服务 `nav26`；它运行的是镜像内已经编译好的工作区。
+
+```bash
+docker compose run --rm nav26
+```
+
+如果需要边改源码边编译，使用开发服务 `nav26-dev`。它会把当前仓库挂进容器，并用 Docker volume 保存 `build/`、`install/`，避免每次进容器都从零编译。
+
+```bash
+docker compose --profile dev run --rm nav26-dev
+./build.sh
+```
+
 ## Ubuntu 26 本机 GUI 运行
 
 如果 Ubuntu 26 主机本身带桌面环境，不需要 VNC。让容器访问主机 X11/XWayland 显示即可。
 
-主机上先允许本地 Docker 容器访问显示服务：
+直接启动项目统一入口的仿真模式：
 
 ```bash
-xhost +local:docker
+sudo docker compose run --rm nav26 ros2 launch rm_bringup sentry_bringup.launch.py sim:=true rviz:=true
 ```
 
-直接启动仿真导航：
+或者只启动 Nav2 + GVC 仿真导航：
 
 ```bash
-docker compose run --rm nav26 ros2 launch nav2_client_cpp nav2_stack_with_gvc_sim.launch.py
+sudo docker compose run --rm nav26 ros2 launch nav2_client_cpp nav2_stack_with_gvc_sim.launch.py
+```
+
+真实机器人导航入口：
+
+```bash
+sudo docker compose run --rm nav26 ros2 launch rm_bringup sentry_bringup.launch.py mode:=nav
+```
+
+Odin1 内置里程计模式：
+
+```bash
+sudo docker compose run --rm nav26 ros2 launch rm_bringup sentry_bringup.launch.py mode:=nav lidar:=odin1 odin_mode:=odom
 ```
 
 单独测试 RViz：
 
 ```bash
-docker compose run --rm nav26 rviz2
+sudo docker compose run --rm nav26 rviz2
+```
+
+开发容器里运行同样的命令时，把服务名换成 `nav26-dev`：
+
+```bash
+docker compose --profile dev run --rm nav26-dev ros2 launch rm_bringup sentry_bringup.launch.py sim:=true rviz:=true
 ```
 
 如果 RViz 报 `could not connect to display`，先在主机确认：
@@ -40,7 +71,7 @@ docker compose run --rm nav26 rviz2
 echo $DISPLAY
 ```
 
-正常情况下不应为空。`docker-compose.yml` 会把主机的 `/tmp/.X11-unix` 挂进容器，并把主机 `DISPLAY` 传给容器。
+正常情况下不应为空。`docker-compose.yml` 会把主机的 `/tmp/.X11-unix` 和 `/run/user/1000` 挂进容器，并把主机 `DISPLAY` 与 `XAUTHORITY` 传给容器。
 
 ## 进入容器 Shell
 
@@ -52,6 +83,12 @@ docker compose run --rm nav26
 
 - `/opt/ros/humble/setup.bash`
 - `/home/zerohour/xjtu_nav26/install/setup.bash`
+
+开发容器：
+
+```bash
+docker compose --profile dev run --rm nav26-dev
+```
 
 ## 远程或无桌面环境使用 VNC
 

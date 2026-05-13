@@ -1,10 +1,15 @@
 .git
 .gitignore
 .vscode
+.agents
+.codex
 
 build
 install
 log
+**/build
+**/install
+**/log
 
 **/__pycache__
 **/*.pyc
@@ -13,6 +18,7 @@ log
 *.bag
 *.db3
 *.mcap
+*.pcd
 
 .dockerignore
 docker-compose.override.yml

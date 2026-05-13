@@ -1,6 +1,44 @@
 # odin1 用的
 ## 配置环境
 
+### Docker（推荐）
+
+本项目已经配置 ROS Humble/Jammy 容器，主机不需要直接安装 ROS Humble。
+
+```bash
+docker compose build
+docker compose run --rm nav26
+```
+
+运行仿真导航：
+
+```bash
+sudo docker compose run --rm nav26 ros2 launch rm_bringup sentry_bringup.launch.py sim:=true rviz:=true
+```
+
+运行真实机器人导航：
+
+```bash
+docker compose run --rm nav26 ros2 launch rm_bringup sentry_bringup.launch.py mode:=nav
+```
+
+开发模式会挂载当前源码，并用 Docker volume 保存 `build/`、`install/`：
+
+```bash
+docker compose --profile dev run --rm nav26-dev
+./build.sh
+```
+
+无桌面或远程机器可以在容器内用 VNC：
+
+```bash
+VNC_PASSWORD='你的密码' docker compose run --rm nav26
+./script/start_vnc_rviz.sh
+./script/run_in_vnc.sh rviz2
+```
+
+更完整的 Docker 说明见 [docker/README.md](docker/README.md)。
+
 ### rosdep 
 
 ```bash
