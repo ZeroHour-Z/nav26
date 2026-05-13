@@ -22,7 +22,7 @@ def generate_launch_description():
     autostart = True
 
     default_map_path = PathJoinSubstitution(
-        [FindPackageShare("rm_bringup"), "PCD", "RMUL", "newMap.yaml"],
+        [FindPackageShare("rm_bringup"), "PCD", "RMUC", "map.yaml"],
     )
     map_arg = DeclareLaunchArgument(
         'map',
@@ -177,6 +177,13 @@ def generate_launch_description():
                     "sim_tf_parent_frame": "odom",
                     "map_frame": "map",
                     "base_frame": "base_link",
+                    "enable_dynamic_lookahead": True,
+                    "lookahead_distance": 1.0,
+                    "min_lookahead_distance": 0.25,
+                    "max_lookahead_distance": 0.8,
+                    "curvature_window_distance": 0.8,
+                    "cmd_accel_limit_linear": 1.0,
+                    "cmd_decel_limit_linear": 2.0,
                     "pose_predict_enabled": False,
                     "sim_init_x": ParameterValue(LaunchConfiguration('sim_init_x'), value_type=float),
                     "sim_init_y": ParameterValue(LaunchConfiguration('sim_init_y'), value_type=float),

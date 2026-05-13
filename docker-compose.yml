@@ -1,0 +1,23 @@
+services:
+  nav26:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: xjtu-nav26:humble
+    container_name: xjtu-nav26
+    network_mode: host
+    ipc: host
+    privileged: true
+    stdin_open: true
+    tty: true
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      DISPLAY: ${DISPLAY:-:0}
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      QT_X11_NO_MITSHM: "1"
+      VNC_PASSWORD: ${VNC_PASSWORD:-}
+      VNC_TUNNEL_HOST: ${VNC_TUNNEL_HOST:-localhost}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./log:/home/zerohour/xjtu_nav26/log

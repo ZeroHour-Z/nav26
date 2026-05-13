@@ -1,5 +1,34 @@
-#!/usr/bin/zsh
-source /opt/ros/humble/setup.zsh
+#!/usr/bin/bash
+set -e
+
+WORKSPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$WORKSPACE_DIR"
+
+source /opt/ros/humble/setup.bash
+
+clean_stale_colcon_cache() {
+    local stale_cache=0
+    local cache source_dir build_dir
+
+    shopt -s nullglob
+    for cache in build/*/CMakeCache.txt; do
+        source_dir=$(grep -m1 '^CMAKE_HOME_DIRECTORY:INTERNAL=' "$cache" | cut -d= -f2-)
+        build_dir=$(grep -m1 '^CMAKE_CACHEFILE_DIR:INTERNAL=' "$cache" | cut -d= -f2-)
+
+        if [[ "$source_dir" != "$WORKSPACE_DIR/"* || "$build_dir" != "$WORKSPACE_DIR/build/"* ]]; then
+            stale_cache=1
+            break
+        fi
+    done
+    shopt -u nullglob
+
+    if (( stale_cache )); then
+        echo "检测到 build/ 中的 CMake 缓存来自其他工作区，正在清理 build install log..."
+        rm -rf build install log
+    fi
+}
+
+clean_stale_colcon_cache
 
 # 检查总内存 (单位: KB)
 MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
