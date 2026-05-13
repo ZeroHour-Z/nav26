@@ -94,7 +94,7 @@ def generate_launch_description():
         additional_env={'LD_LIBRARY_PATH': '/usr/lib/x86_64-linux-gnu:' + os.environ.get('LD_LIBRARY_PATH', '')},
     )
     point_lio_ros2_node = Node(
-        package="point_lio",
+        package="point_lio_ros2",
         executable="pointlio_mapping",
         name="pointlio_mapping",
         output="screen",

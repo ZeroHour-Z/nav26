@@ -1,5 +1,6 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction, OpaqueFunction, LogInfo
+from launch.actions import (DeclareLaunchArgument, ExecuteProcess, GroupAction,
+                               IncludeLaunchDescription, LogInfo, OpaqueFunction, TimerAction)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.substitutions import FindPackageShare
@@ -7,24 +8,31 @@ from launch_ros.actions import Node
 from launch.conditions import IfCondition, UnlessCondition
 from ament_index_python.packages import get_package_share_directory
 from pathlib import Path
+import os
 import re
+import tempfile
+import yaml
 
 
-def _replace_yaml_line(text: str, key: str, value_literal: str) -> str:
-    pattern = rf'(^\s*{re.escape(key)}\s*:\s*).*$'
-    new_text, count = re.subn(
-        pattern,
-        lambda m: m.group(1) + value_literal,
-        text,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    if count == 0:
-        return text + f"\n  {key}: {value_literal}\n"
-    return new_text
+def _patch_yaml_dict(data: dict, key: str, value) -> dict:
+    """Set a nested YAML key to the given value, creating intermediate dicts as needed.
+    Returns True if the key was newly created (didn't exist before)."""
+    parts = key.split('.')
+    d = data
+    for part in parts[:-1]:
+        if part not in d or not isinstance(d[part], dict):
+            d[part] = {}
+        d = d[part]
+    existed = parts[-1] in d
+    d[parts[-1]] = value
+    return not existed
 
 
-def _configure_odin_mode(context):
+def _launch_odin_with_config(context):
+    """Create a temp config YAML with Odin mode overrides, then launch odin_ros_driver.
+
+    Does NOT modify any source-tree or installed files.
+    """
     if LaunchConfiguration('sim').perform(context).lower() == 'true':
         return []
     lidar = LaunchConfiguration('lidar').perform(context)
@@ -34,52 +42,142 @@ def _configure_odin_mode(context):
     run_mode = LaunchConfiguration('mode').perform(context)
     odin_mode = LaunchConfiguration('odin_mode').perform(context)
     relocalization_map = LaunchConfiguration('odin_relocalization_map').perform(context)
+
     mode_to_value = {
         'odom': '0',
         'slam': '1',
         'relocalization': '2',
     }
-    custom_map_mode = mode_to_value.get(odin_mode, '0')
+    custom_map_mode = int(mode_to_value.get(odin_mode, '0'))
 
+    # Locate the original YAML (source-tree first, fallback to installed share)
     this_file = Path(__file__).resolve()
     source_cfg = this_file.parents[2] / 'odin_ros_driver' / 'config' / 'control_command.yaml'
 
-    target_files = [source_cfg]
-    try:
-        share_cfg = Path(get_package_share_directory('odin_ros_driver')) / 'config' / 'control_command.yaml'
-        if share_cfg not in target_files:
-            target_files.append(share_cfg)
-    except Exception:
-        pass
+    if source_cfg.exists():
+        original_cfg = source_cfg
+    else:
+        try:
+            original_cfg = Path(get_package_share_directory('odin_ros_driver')) / 'config' / 'control_command.yaml'
+        except Exception:
+            return [
+                LogInfo(msg='[sentry_bringup] ERROR: cannot locate control_command.yaml for Odin configuration.')
+            ]
 
-    updated_files = []
-    for cfg in target_files:
-        if not cfg.exists():
-            continue
-        text = cfg.read_text(encoding='utf-8')
-        text = _replace_yaml_line(text, 'custom_map_mode', custom_map_mode)
-        text = _replace_yaml_line(text, 'relocalization_map_abs_path', f'"{relocalization_map}"')
-        cfg.write_text(text, encoding='utf-8')
-        updated_files.append(str(cfg))
+    if not original_cfg.exists():
+        return [
+            LogInfo(msg=f'[sentry_bringup] ERROR: control_command.yaml not found at {original_cfg}')
+        ]
+
+    # Read original, modify in memory, write to temp file
+    text = original_cfg.read_text(encoding='utf-8')
+    data = yaml.safe_load(text)
+    _patch_yaml_dict(data, 'register_keys.custom_map_mode', custom_map_mode)
+    _patch_yaml_dict(data, 'register_keys.relocalization_map_abs_path', relocalization_map)
+
+    tmp = tempfile.NamedTemporaryFile(
+        mode='w', suffix='.yaml', prefix='odin_control_command_',
+        delete=False, encoding='utf-8')
+    yaml.dump(data, tmp, default_flow_style=False, allow_unicode=True)
+    tmp_path = tmp.name
+    tmp.close()
+
+    actions = []
+    actions.append(LogInfo(msg=f'[sentry_bringup] Odin temp config written to {tmp_path}'))
+    actions.append(LogInfo(msg=f'[sentry_bringup] Odin mode: {odin_mode} (custom_map_mode={custom_map_mode})'))
 
     if odin_mode == 'relocalization' and not relocalization_map:
-        return [
-            LogInfo(msg='[sentry_bringup] WARNING: odin_mode=relocalization but odin_relocalization_map is empty.'),
-            LogInfo(msg='[sentry_bringup] Please set odin_relocalization_map:=/abs/path/to/map.bin'),
-        ]
+        actions.append(LogInfo(msg='[sentry_bringup] WARNING: odin_mode=relocalization but odin_relocalization_map is empty.'))
+        actions.append(LogInfo(msg='[sentry_bringup] Please set odin_relocalization_map:=/abs/path/to/map.bin'))
 
     if run_mode == 'nav' and odin_mode in ('odom', 'slam'):
-        return [
-            LogInfo(msg='[sentry_bringup] WARNING: odin_mode=odom/slam in nav mode may accumulate odometry drift.'),
-            LogInfo(msg='[sentry_bringup] Recommendation: use odin_mode:=relocalization with odin_relocalization_map:=/abs/path/to/map.bin'),
-            LogInfo(msg=f'[sentry_bringup] Odin mode set to {odin_mode} (custom_map_mode={custom_map_mode})'),
-            LogInfo(msg='[sentry_bringup] Updated config files: ' + ', '.join(updated_files) if updated_files else '[sentry_bringup] No control_command.yaml found to update'),
-        ]
+        actions.append(LogInfo(msg='[sentry_bringup] WARNING: odin_mode=odom/slam in nav mode may accumulate odometry drift.'))
+        actions.append(LogInfo(msg='[sentry_bringup] Recommendation: use odin_mode:=relocalization with odin_relocalization_map:=/abs/path/to/map.bin'))
 
-    return [
-        LogInfo(msg=f'[sentry_bringup] Odin mode set to {odin_mode} (custom_map_mode={custom_map_mode})'),
-        LogInfo(msg='[sentry_bringup] Updated config files: ' + ', '.join(updated_files) if updated_files else '[sentry_bringup] No control_command.yaml found to update'),
-    ]
+    # Build odin nodes directly (instead of IncludeLaunchDescription) so we can
+    # pass the temp config to host_sdk_sample without modifying odin_ros_driver.
+    odin_pkg = get_package_share_directory('odin_ros_driver')
+
+    # USB power-cycle
+    usb_reset_script = os.path.join(odin_pkg, 'script', 'usb_reset_odin.sh')
+    if not os.path.isfile(usb_reset_script):
+        usb_reset_script = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'odin_ros_driver', 'script', 'usb_reset_odin.sh')
+    actions.append(ExecuteProcess(
+        cmd=['bash', usb_reset_script],
+        name='usb_reset_odin',
+        output='screen',
+    ))
+
+    # host_sdk_sample — the only node that needs the patched config
+    # Fix libusb conflict with MVS SDK — prioritize system libusb
+    libusb_env = {'LD_LIBRARY_PATH': '/usr/lib/x86_64-linux-gnu:' + os.environ.get('LD_LIBRARY_PATH', '')}
+    actions.append(TimerAction(
+        period=7.0,
+        actions=[Node(
+            package='odin_ros_driver',
+            executable='host_sdk_sample',
+            name='host_sdk_sample',
+            output='screen',
+            parameters=[{'config_file': tmp_path}],
+            additional_env=libusb_env,
+        )]
+    ))
+
+    # pcd2depth node (reads original config — custom_map_mode irrelevant to it)
+    pcd2depth_config_path = os.path.join(odin_pkg, 'config', 'control_command.yaml')
+    with open(pcd2depth_config_path, 'r') as f:
+        pcd2depth_params = yaml.safe_load(f)
+    pcd2depth_calib_path = os.path.join(odin_pkg, 'config', 'calib.yaml')
+    pcd2depth_params['calib_file_path'] = pcd2depth_calib_path
+    actions.append(Node(
+        package='odin_ros_driver',
+        executable='pcd2depth_ros2_node',
+        name='pcd2depth_ros2_node',
+        output='screen',
+        parameters=[pcd2depth_params],
+        additional_env=libusb_env,
+    ))
+
+    # cloud reprojection node
+    reprojection_config_path = os.path.join(odin_pkg, 'config', 'control_command.yaml')
+    with open(reprojection_config_path, 'r') as f:
+        reprojection_params = yaml.safe_load(f)
+    reprojection_calib_path = os.path.join(odin_pkg, 'config', 'calib.yaml')
+    reprojection_params['calib_file_path'] = reprojection_calib_path
+    actions.append(Node(
+        package='odin_ros_driver',
+        executable='cloud_reprojection_ros2_node',
+        name='cloud_reprojection_ros2_node',
+        output='screen',
+        parameters=[reprojection_params],
+        additional_env=libusb_env,
+    ))
+
+    # image overlay node
+    overlay_config_path = os.path.join(odin_pkg, 'config', 'control_command.yaml')
+    with open(overlay_config_path, 'r') as f:
+        overlay_params = yaml.safe_load(f)
+    actions.append(Node(
+        package='odin_ros_driver',
+        executable='image_overlay_node',
+        name='image_overlay_node',
+        output='screen',
+        parameters=[overlay_params],
+        additional_env=libusb_env,
+    ))
+
+    # RViz for Odin (optional — matches odin1_ros2.launch.py behaviour)
+    rviz_config_path = os.path.join(odin_pkg, 'config', 'odin_ros2.rviz')
+    actions.append(Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2_odin',
+        output='screen',
+        arguments=['-d', rviz_config_path],
+    ))
+    return actions
 
 
 def generate_launch_description():
@@ -101,12 +199,12 @@ def generate_launch_description():
     backend_arg = DeclareLaunchArgument(
         'backend',
         default_value='point_lio',
-        description='定位后端: fast_lio, fast_lio, point_lio'
+        description='定位后端: fast_lio, faster_lio, point_lio'
     )
 
     lidar_arg = DeclareLaunchArgument(
         'lidar',
-        default_value='mid360',
+        default_value='odin1',
         description='雷达类型: mid360 | odin1'
     )
 
@@ -145,7 +243,7 @@ def generate_launch_description():
         'decision', default_value='false', description='启动决策节点'
     )
     terrain_arg = DeclareLaunchArgument(
-        'terrain', default_value='false', description='启动地形分析'
+        'terrain', default_value='true', description='启动地形分析'
     )
     region_detector_arg = DeclareLaunchArgument(
         'region_detector', default_value='true', description='启动区域检测节点'
@@ -169,22 +267,6 @@ def generate_launch_description():
             PythonExpression([
                 "'", LaunchConfiguration('driver'), "' == 'true' and '",
                 LaunchConfiguration('lidar'), "' == 'mid360'"
-            ])
-        )
-    )
-
-    odin_driver = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution([
-                FindPackageShare('odin_ros_driver'),
-                'launch',
-                'odin1_ros2.launch.py'
-            ])
-        ),
-        condition=IfCondition(
-            PythonExpression([
-                "'", LaunchConfiguration('driver'), "' == 'true' and '",
-                LaunchConfiguration('lidar'), "' == 'odin1'"
             ])
         )
     )
@@ -382,13 +464,12 @@ def generate_launch_description():
         region_detector_arg,
         rviz_arg,
 
-        OpaqueFunction(function=_configure_odin_mode),
+        OpaqueFunction(function=_launch_odin_with_config),
 
         # 真机 / 建图路径
         GroupAction(
             actions=[
                 livox_driver,
-                odin_driver,
                 odin_base_to_robot_base_tf,
                 localization_launch,
                 mapping_launch,

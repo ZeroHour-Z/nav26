@@ -44,7 +44,7 @@ fi
 colcon build --symlink-install --parallel-workers 4 --packages-select livox_ros_driver2 --cmake-args -DROS_EDITION=ROS2 -DHUMBLE_ROS=humble -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 # LIOS=(faster_lio_ros2 point_lio_ros2 fast_lio small_point_lio point_lio)
-LIOS=(faster_lio_ros2 point_lio_ros2 fast_lio point_lio)
+LIOS=(faster_lio_ros2 point_lio_ros2 fast_lio)
 SKIPS=("${LIOS[@]}" "livox_ros_driver2")
 
 # 根据内存大小决定编译策略
