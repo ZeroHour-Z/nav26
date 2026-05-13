@@ -366,32 +366,40 @@ def generate_launch_description():
     # ========================================================================
     # 5. Nav2 导航栈 (仅在 nav 模式下)
     # ========================================================================
-    # 等待地图加载？通常 Nav2 栈会处理自己的生命周期。
-    nav_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution([
-                FindPackageShare('nav2_client_cpp'), 
-                'launch', 
-                'nav2_stack_with_gvc.launch.py'
-            ])
-        ),
-        launch_arguments={
-            'map': LaunchConfiguration('map_yaml'),
-            'gvc_odom_topic': PythonExpression([
-                "'/odin1/odometry' if '", LaunchConfiguration('lidar'), "' == 'odin1' else '/odom'"
-            ]),
-            'gvc_base_frame': 'base_link',
-            # 所有 odin 模式都先发布静态 map->odom (identity) 到 /tf_static，
-            # 保证 map 帧在启动初期就存在，Nav2 costmap 才能初始化。
-            # 驱动在 relocalization 成功后会通过 /tf 动态发布 map->odom (已修正方向)，
-            # tf2 在 lookup 时会优先用更新的动态 TF，因此重定位的修正不会丢失。
-            'publish_map_to_odom_tf': PythonExpression([
-                "'true' if '", LaunchConfiguration('lidar'), "' == 'odin1' else 'false'"
-            ]),
-        }.items(),
-        condition=IfCondition(
-            PythonExpression(["'", LaunchConfiguration('mode'), "' == 'nav'"])
-        )
+    # Odin1 需要等待驱动启动后才发布 odom->base_link TF；
+    # 延迟 10s 启动 Nav2，避免 local_costmap 初始化时 TF 不可用。
+    nav_launch = TimerAction(
+        period=PythonExpression([
+            "'10.0' if '", LaunchConfiguration('lidar'), "' == 'odin1' else '0.0'"
+        ]),
+        actions=[
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    PathJoinSubstitution([
+                        FindPackageShare('nav2_client_cpp'),
+                        'launch',
+                        'nav2_stack_with_gvc.launch.py'
+                    ])
+                ),
+                launch_arguments={
+                    'map': LaunchConfiguration('map_yaml'),
+                    'gvc_odom_topic': PythonExpression([
+                        "'/odin1/odometry' if '", LaunchConfiguration('lidar'), "' == 'odin1' else '/odom'"
+                    ]),
+                    'gvc_base_frame': 'base_link',
+                    # 所有 odin 模式都先发布静态 map->odom (identity) 到 /tf_static，
+                    # 保证 map 帧在启动初期就存在，Nav2 costmap 才能初始化。
+                    # 驱动在 relocalization 成功后会通过 /tf 动态发布 map->odom (已修正方向)，
+                    # tf2 在 lookup 时会优先用更新的动态 TF，因此重定位的修正不会丢失。
+                    'publish_map_to_odom_tf': PythonExpression([
+                        "'true' if '", LaunchConfiguration('lidar'), "' == 'odin1' else 'false'"
+                    ]),
+                }.items(),
+                condition=IfCondition(
+                    PythonExpression(["'", LaunchConfiguration('mode'), "' == 'nav'"])
+                )
+            )
+        ]
     )
 
     # ========================================================================
