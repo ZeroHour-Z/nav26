@@ -280,7 +280,7 @@ def generate_launch_description():
         'decision', default_value='false', description='启动决策节点'
     )
     terrain_arg = DeclareLaunchArgument(
-        'terrain', default_value='true', description='启动地形分析和动态避障'
+        'terrain', default_value='false', description='启动地形分析和动态避障'
     )
     region_detector_arg = DeclareLaunchArgument(
         'region_detector', default_value='true', description='启动区域检测节点'

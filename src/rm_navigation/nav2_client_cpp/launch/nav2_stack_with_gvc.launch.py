@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import PathJoinSubstitution, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -28,6 +28,12 @@ def generate_launch_description():
         'publish_map_to_odom_tf',
         default_value='false',
         description='Publish static TF map->odom for odom-only sources'
+    )
+
+    use_gvc_arg = DeclareLaunchArgument(
+        'use_gvc',
+        default_value='false',
+        description='Start global_velocity_controller. Default false: Nav2 MPPI publishes /cmd_vel directly.'
     )
 
     # 默认地图路径
@@ -95,6 +101,7 @@ def generate_launch_description():
         gvc_odom_topic_arg,
         gvc_base_frame_arg,
         publish_map_to_odom_tf_arg,
+        use_gvc_arg,
         LogInfo(msg=["Loading map from: ", LaunchConfiguration('map')]),
     ]
 
@@ -136,8 +143,16 @@ def generate_launch_description():
                 executable="controller_server",
                 name="controller_server",
                 output="screen",
+                condition=UnlessCondition(LaunchConfiguration('use_gvc')),
                 parameters=[default_params, {"use_sim_time": use_sim_time}],
-                # Nav2输出到中间话题，GVC处理后输出到/cmd_vel
+            ),
+            Node(
+                package="nav2_controller",
+                executable="controller_server",
+                name="controller_server",
+                output="screen",
+                condition=IfCondition(LaunchConfiguration('use_gvc')),
+                parameters=[default_params, {"use_sim_time": use_sim_time}],
                 remappings=[("/cmd_vel", "/nav2_cmd_vel")],
             ),
             Node(
@@ -167,11 +182,11 @@ def generate_launch_description():
     )
 
     node_names = [
+        "map_server",
         "controller_server",
         "planner_server",
         "behavior_server",
         "bt_navigator",
-        "map_server",
     ]
 
     nodes.append(
@@ -190,13 +205,14 @@ def generate_launch_description():
         )
     )
 
-    # GVC作为中间层，订阅Nav2的输出并发布到底盘
+    # 默认由 Nav2 MPPI 直接发布 /cmd_vel。GVC 保留为显式调试选项。
     nodes.append(
         Node(
             package="global_velocity_controller",
             executable="global_velocity_controller_node",
             name="global_velocity_controller",
             output="screen",
+            condition=IfCondition(LaunchConfiguration('use_gvc')),
             parameters=[
                 gvc_params,
                 gvc_tracker_params,

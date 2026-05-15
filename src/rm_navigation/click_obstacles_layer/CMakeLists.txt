@@ -19,6 +19,7 @@ include_directories(
 add_library(${PROJECT_NAME} SHARED
   src/click_obstacles_layer.cpp
   src/dynamic_scan_layer.cpp
+  src/region_keepout_layer.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC

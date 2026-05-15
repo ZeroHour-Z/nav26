@@ -94,6 +94,11 @@ public:
         // 当与 Nav2 一起仿真时，应设置为 "odom" 并由外部发布静态 map->odom TF，
         // 以避免 base_link 在 TF 树中出现多个父节点。
         declare_parameter<std::string>("sim_tf_parent_frame", "");
+        // 外部速度仿真模式：GVC 不再自己跟踪 /plan，而是订阅 Nav2 MPPI 的
+        // /cmd_vel 并用 Simulator2D 积分位姿，只负责发布仿真 TF。
+        declare_parameter<bool>("sim_external_cmd_vel", false);
+        declare_parameter<std::string>("sim_cmd_vel_topic", "/cmd_vel");
+        declare_parameter<double>("sim_cmd_vel_timeout", 0.3);
 
         // Escape mode params (from gvc_old)
         declare_parameter<int>("escape_free_cost_value", 0);
@@ -152,6 +157,8 @@ public:
 
         // 配置仿真器
         simulate_ = get_parameter("simulate").as_bool();
+        sim_external_cmd_vel_ = get_parameter("sim_external_cmd_vel").as_bool();
+        sim_cmd_vel_timeout_ = get_parameter("sim_cmd_vel_timeout").as_double();
         sim_tf_parent_frame_ = get_parameter("sim_tf_parent_frame").as_string();
         if (sim_tf_parent_frame_.empty()) {
             sim_tf_parent_frame_ = map_frame_;
@@ -163,6 +170,13 @@ public:
             sim_config.init_yaw = get_parameter("sim_init_yaw").as_double();
             simulator_ = gvc::Simulator2D(sim_config);
             RCLCPP_INFO(get_logger(), "Simulation mode is ON.");
+            if (sim_external_cmd_vel_) {
+                RCLCPP_INFO(
+                    get_logger(),
+                    "External cmd_vel simulation is ON. Subscribing to %s.",
+                    get_parameter("sim_cmd_vel_topic").as_string().c_str()
+                );
+            }
         }
 
         // --- ROS接口 ---
@@ -170,6 +184,13 @@ public:
             get_parameter("cmd_vel_topic").as_string(),
             10
         );
+        if (simulate_ && sim_external_cmd_vel_) {
+            external_cmd_sub_ = create_subscription<geometry_msgs::msg::Twist>(
+                get_parameter("sim_cmd_vel_topic").as_string(),
+                10,
+                std::bind(&SimplifiedControllerNode::onExternalCmdVel, this, _1)
+            );
+        }
         path_sub_ = create_subscription<nav_msgs::msg::Path>(
             get_parameter("path_topic").as_string(),
             10,
@@ -240,8 +261,19 @@ private:
         has_hf_odom_ = true;
     }
 
+    void onExternalCmdVel(const geometry_msgs::msg::Twist::SharedPtr msg) {
+        last_external_cmd_ = *msg;
+        last_external_cmd_stamp_ = get_clock()->now();
+        has_external_cmd_ = true;
+    }
+
     void onControlTimer() {
         const rclcpp::Time now = get_clock()->now();
+        if (simulate_ && sim_external_cmd_vel_) {
+            integrateExternalCmdVel(now);
+            return;
+        }
+
         // If currently escaping, skip normal control (escape timer will publish)
         if (in_escape_mode_) {
             if (simulate_)
@@ -482,6 +514,9 @@ private:
     // Escape timer callback: handles detection and motion during escape
     void onEscapeTimer() {
         const rclcpp::Time now = get_clock()->now();
+        if (simulate_ && sim_external_cmd_vel_) {
+            return;
+        }
 
         // 1. 获取机器人当前位姿
         double current_x, current_y, current_yaw;
@@ -982,6 +1017,35 @@ private:
         last_cmd_wz_ = 0.0;
     }
 
+    void integrateExternalCmdVel(const rclcpp::Time& now) {
+        if (!has_prev_time_) {
+            prev_time_ = now;
+            has_prev_time_ = true;
+            publishSimulatedTransform(now);
+            return;
+        }
+
+        double dt = (now - prev_time_).seconds();
+        prev_time_ = now;
+        if (dt <= 0.0) {
+            publishSimulatedTransform(now);
+            return;
+        }
+        dt = std::min(dt, max_dt_);
+
+        geometry_msgs::msg::Twist cmd;
+        if (has_external_cmd_ &&
+            (now - last_external_cmd_stamp_).seconds() <= sim_cmd_vel_timeout_) {
+            cmd = last_external_cmd_;
+        }
+
+        simulator_.integrateBodyCommand({ cmd.linear.x, cmd.linear.y, cmd.angular.z }, dt);
+        last_cmd_vx_ = cmd.linear.x;
+        last_cmd_vy_ = cmd.linear.y;
+        last_cmd_wz_ = cmd.angular.z;
+        publishSimulatedTransform(now);
+    }
+
     void enterGoalLock() {
         goal_locked_ = true;
         goal_lock_start_ = get_clock()->now();
@@ -1023,6 +1087,7 @@ private:
 
     // ROS 接口
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_pub_;
+    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr external_cmd_sub_;
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_highfreq_sub_;
@@ -1081,6 +1146,11 @@ private:
 
     // 仿真
     bool simulate_ { false };
+    bool sim_external_cmd_vel_ { false };
+    double sim_cmd_vel_timeout_ { 0.3 };
+    bool has_external_cmd_ { false };
+    geometry_msgs::msg::Twist last_external_cmd_;
+    rclcpp::Time last_external_cmd_stamp_;
     gvc::Simulator2D simulator_ {};
 
     // Costmap and escape state

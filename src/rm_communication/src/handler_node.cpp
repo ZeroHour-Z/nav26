@@ -21,6 +21,7 @@
 #include <rclcpp/logging.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <stdexcept>
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/u_int8.hpp>
@@ -43,6 +44,12 @@ public:
         this->declare_parameter<std::string>("map_frame", "map");
         this->declare_parameter<bool>("enable_chase", true); // 是否启用追击功能
         this->declare_parameter<std::string>("odom_topic", "/odom");
+        this->declare_parameter<std::string>("cmd_vel_frame", "base_link");
+        this->declare_parameter<std::string>("angular_z_mode", "yaw_rate");
+        this->declare_parameter<double>("yaw_rate_preview_time", 0.15);
+        this->declare_parameter<bool>("smooth_world_velocity", true);
+        this->declare_parameter<double>("world_velocity_filter_tau", 0.12);
+        this->declare_parameter<double>("world_velocity_accel_limit", 1.2);
 
         chase_min_distance_ = this->get_parameter("chase_min_distance").as_double();
         stop_distance_threshold_ = this->get_parameter("stop_distance_threshold").as_double();
@@ -50,6 +57,20 @@ public:
         map_frame_ = this->get_parameter("map_frame").as_string();
         enable_chase_ = this->get_parameter("enable_chase").as_bool();
         odom_topic_ = this->get_parameter("odom_topic").as_string();
+        cmd_vel_frame_ = this->get_parameter("cmd_vel_frame").as_string();
+        angular_z_mode_ = this->get_parameter("angular_z_mode").as_string();
+        yaw_rate_preview_time_ = this->get_parameter("yaw_rate_preview_time").as_double();
+        smooth_world_velocity_ = this->get_parameter("smooth_world_velocity").as_bool();
+        world_velocity_filter_tau_ = this->get_parameter("world_velocity_filter_tau").as_double();
+        world_velocity_accel_limit_ =
+            this->get_parameter("world_velocity_accel_limit").as_double();
+
+        if (cmd_vel_frame_ != "base_link" && cmd_vel_frame_ != "map") {
+            throw std::runtime_error("cmd_vel_frame must be 'base_link' or 'map'");
+        }
+        if (angular_z_mode_ != "yaw_rate" && angular_z_mode_ != "yaw_angle") {
+            throw std::runtime_error("angular_z_mode must be 'yaw_rate' or 'yaw_angle'");
+        }
 
         // 发布器
         patrol_group_pub_ = this->create_publisher<std_msgs::msg::String>("/patrol_group", 10);
@@ -134,7 +155,12 @@ public:
             std::bind(&HandlerNode::updateMapYaw, this)
         );
 
-        RCLCPP_INFO(this->get_logger(), "handler_node started");
+        RCLCPP_INFO(
+            this->get_logger(),
+            "handler_node started, cmd_vel_frame=%s, angular_z_mode=%s",
+            cmd_vel_frame_.c_str(),
+            angular_z_mode_.c_str()
+        );
     }
 
     ~HandlerNode() override = default;
@@ -224,28 +250,80 @@ private:
     }
 
     void onCmdVel(const geometry_msgs::msg::Twist::SharedPtr msg) {
-        const double vx_map = msg->linear.x;
-        const double vy_map = msg->linear.y;
+        const double vx = msg->linear.x;
+        const double vy = msg->linear.y;
 
-        // 零速指令：直接归零，避免浮点噪声和全向轮滚子残余滑动
-        if (std::abs(vx_map) < 1e-4 && std::abs(vy_map) < 1e-4) {
+        if (std::abs(vx) < 1e-4 && std::abs(vy) < 1e-4) {
             nav_info_.x_speed = 0.0f;
             nav_info_.y_speed = 0.0f;
-            nav_info_.yaw_desired = msg->angular.z;
-            return;
+            smoothed_world_vx_ = 0.0;
+            smoothed_world_vy_ = 0.0;
+            has_smoothed_world_velocity_ = false;
+        } else if (cmd_vel_frame_ == "base_link") {
+            // Nav2 标准 Twist: linear 在 base_link 坐标系下，angular.z 是角速度。
+            double vx_base = vx;
+            double vy_base = vy;
+            if (smooth_world_velocity_) {
+                filterBaseCommandInWorldFrame(vx_base, vy_base);
+            }
+            nav_info_.x_speed = static_cast<float>(vx_base);
+            nav_info_.y_speed = static_cast<float>(vy_base);
+        } else {
+            // 旧 GVC 链路: linear 是 map 坐标系速度，需要转换到电控使用的机器人坐标系。
+            const double predict_time = 0.025;
+            double predicted_yaw = yaw_in_map_ + estimated_wz_ * predict_time;
+            const double cos_yaw = std::cos(predicted_yaw);
+            const double sin_yaw = std::sin(predicted_yaw);
+            nav_info_.x_speed = static_cast<float>(cos_yaw * vx + sin_yaw * vy);
+            nav_info_.y_speed = static_cast<float>(-sin_yaw * vx + cos_yaw * vy);
         }
 
-        // 预测未来的航向角（补偿延迟）
-        const double predict_time = 0.025;
-        double predicted_yaw = yaw_in_map_ + estimated_wz_ * predict_time;
+        if (angular_z_mode_ == "yaw_rate") {
+            nav_info_.yaw_desired =
+                static_cast<float>(normalizeAngle(yaw_in_map_ + msg->angular.z * yaw_rate_preview_time_));
+        } else {
+            nav_info_.yaw_desired = static_cast<float>(normalizeAngle(msg->angular.z));
+        }
+    }
 
-        const double cos_yaw = std::cos(predicted_yaw);
-        const double sin_yaw = std::sin(predicted_yaw);
+    void filterBaseCommandInWorldFrame(double& vx_base, double& vy_base) {
+        const rclcpp::Time now = this->now();
+        const double cos_yaw = std::cos(yaw_in_map_);
+        const double sin_yaw = std::sin(yaw_in_map_);
 
-        // map 坐标系 -> base_link 坐标系
-        nav_info_.x_speed = static_cast<float>(cos_yaw * vx_map + sin_yaw * vy_map);
-        nav_info_.y_speed = static_cast<float>(-sin_yaw * vx_map + cos_yaw * vy_map);
-        nav_info_.yaw_desired = msg->angular.z;
+        double target_world_vx = cos_yaw * vx_base - sin_yaw * vy_base;
+        double target_world_vy = sin_yaw * vx_base + cos_yaw * vy_base;
+
+        if (!has_smoothed_world_velocity_) {
+            smoothed_world_vx_ = target_world_vx;
+            smoothed_world_vy_ = target_world_vy;
+            last_cmd_filter_time_ = now;
+            has_smoothed_world_velocity_ = true;
+        } else {
+            double dt = (now - last_cmd_filter_time_).seconds();
+            last_cmd_filter_time_ = now;
+            dt = std::clamp(dt, 1e-3, 0.1);
+
+            const double alpha = dt / (std::max(world_velocity_filter_tau_, 1e-3) + dt);
+            target_world_vx = smoothed_world_vx_ + alpha * (target_world_vx - smoothed_world_vx_);
+            target_world_vy = smoothed_world_vy_ + alpha * (target_world_vy - smoothed_world_vy_);
+
+            const double max_delta = std::max(world_velocity_accel_limit_, 0.1) * dt;
+            double dvx = target_world_vx - smoothed_world_vx_;
+            double dvy = target_world_vy - smoothed_world_vy_;
+            const double delta_norm = std::hypot(dvx, dvy);
+            if (delta_norm > max_delta && delta_norm > 1e-6) {
+                const double scale = max_delta / delta_norm;
+                dvx *= scale;
+                dvy *= scale;
+            }
+
+            smoothed_world_vx_ += dvx;
+            smoothed_world_vy_ += dvy;
+        }
+
+        vx_base = cos_yaw * smoothed_world_vx_ + sin_yaw * smoothed_world_vy_;
+        vy_base = -sin_yaw * smoothed_world_vx_ + cos_yaw * smoothed_world_vy_;
     }
 
     void onOdom(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -640,6 +718,14 @@ private:
         tx_pub_->publish(out_msg);
     }
 
+    static double normalizeAngle(double angle) {
+        while (angle > M_PI)
+            angle -= 2.0 * M_PI;
+        while (angle < -M_PI)
+            angle += 2.0 * M_PI;
+        return angle;
+    }
+
     // 发布器
     rclcpp::Publisher<std_msgs::msg::UInt8MultiArray>::SharedPtr tx_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr patrol_group_pub_;
@@ -676,6 +762,16 @@ private:
     std::string chase_topic_ { "/chase_point" };
     std::string map_frame_ { "map" };
     std::string odom_topic_ { "/odom" };
+    std::string cmd_vel_frame_ { "base_link" };
+    std::string angular_z_mode_ { "yaw_rate" };
+    double yaw_rate_preview_time_ { 0.15 };
+    bool smooth_world_velocity_ { true };
+    double world_velocity_filter_tau_ { 0.12 };
+    double world_velocity_accel_limit_ { 1.2 };
+    bool has_smoothed_world_velocity_ { false };
+    double smoothed_world_vx_ { 0.0 };
+    double smoothed_world_vy_ { 0.0 };
+    rclcpp::Time last_cmd_filter_time_;
     bool enable_chase_ { true };
 
     // BT 节点参数客户端

@@ -8,6 +8,7 @@ tests/
 doc/
 image/
 
+.agents/
 .vscode/
 .cursor/
 .cache/

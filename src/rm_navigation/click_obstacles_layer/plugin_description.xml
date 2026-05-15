@@ -5,4 +5,7 @@
   <class name="click_obstacles_layer::DynamicScanLayer" type="click_obstacles_layer::DynamicScanLayer" base_class_type="nav2_costmap_2d::Layer">
     <description>Marks non-persistent lethal obstacles from a LaserScan for global planning</description>
   </class>
+  <class name="click_obstacles_layer::RegionKeepoutLayer" type="click_obstacles_layer::RegionKeepoutLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>Keeps a narrow center corridor through configured special regions by marking side bands as high cost</description>
+  </class>
 </library>

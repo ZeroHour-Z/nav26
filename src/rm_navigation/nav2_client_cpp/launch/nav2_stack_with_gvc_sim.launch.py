@@ -112,8 +112,6 @@ def generate_launch_description():
             name="controller_server",
             output="screen",
             parameters=[default_params, {"use_sim_time": use_sim_time}],
-            # Nav2 controller 的 cmd_vel 输出被 GVC 取代，这里重映射避免污染 /cmd_vel
-            remappings=[("/cmd_vel", "/nav2_cmd_vel")],
         ),
         Node(
             package="nav2_behaviors",
@@ -160,7 +158,7 @@ def generate_launch_description():
         )
     )
 
-    # GVC 仿真：发布 odom->base_link TF，父坐标系强制为 odom 以保持单一 TF 父节点
+    # GVC 仿真：订阅 Nav2 MPPI 的 /cmd_vel 积分位姿，只发布 odom->base_link TF。
     nodes.append(
         Node(
             package="global_velocity_controller",
@@ -174,6 +172,8 @@ def generate_launch_description():
                 {
                     "use_sim_time": use_sim_time,
                     "simulate": True,
+                    "sim_external_cmd_vel": True,
+                    "sim_cmd_vel_topic": "/cmd_vel",
                     "sim_tf_parent_frame": "odom",
                     "map_frame": "map",
                     "base_frame": "base_link",
