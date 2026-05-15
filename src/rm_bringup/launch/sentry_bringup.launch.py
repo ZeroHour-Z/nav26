@@ -1,6 +1,8 @@
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess, GroupAction,
-                               IncludeLaunchDescription, LogInfo, OpaqueFunction, TimerAction)
+                               IncludeLaunchDescription, LogInfo, OpaqueFunction,
+                               RegisterEventHandler, TimerAction)
+from launch.event_handlers import OnShutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.substitutions import FindPackageShare
@@ -9,8 +11,6 @@ from launch.conditions import IfCondition, UnlessCondition
 from ament_index_python.packages import get_package_share_directory
 from pathlib import Path
 import os
-import re
-import tempfile
 import yaml
 
 
@@ -29,9 +29,11 @@ def _patch_yaml_dict(data: dict, key: str, value) -> dict:
 
 
 def _launch_odin_with_config(context):
-    """Create a temp config YAML with Odin mode overrides, then launch odin_ros_driver.
+    """Patch Odin config for this launch, then launch odin_ros_driver.
 
-    Does NOT modify any source-tree or installed files.
+    The ROS2 official driver ignores its config_file launch parameter and reads
+    config/control_command.yaml directly, so keep driver source code untouched
+    and restore the config file when the launch shuts down.
     """
     if LaunchConfiguration('sim').perform(context).lower() == 'true':
         return []
@@ -50,41 +52,77 @@ def _launch_odin_with_config(context):
     }
     custom_map_mode = int(mode_to_value.get(odin_mode, '0'))
 
-    # Locate the original YAML (source-tree first, fallback to installed share)
+    # Locate config files that the official driver may read. In this workspace
+    # host_sdk_sample uses its source-tree path, while helper nodes and installed
+    # launches use the package share path.
     this_file = Path(__file__).resolve()
     source_cfg = this_file.parents[2] / 'odin_ros_driver' / 'config' / 'control_command.yaml'
+    config_paths = []
 
-    if source_cfg.exists():
-        original_cfg = source_cfg
-    else:
-        try:
-            original_cfg = Path(get_package_share_directory('odin_ros_driver')) / 'config' / 'control_command.yaml'
-        except Exception:
-            return [
-                LogInfo(msg='[sentry_bringup] ERROR: cannot locate control_command.yaml for Odin configuration.')
-            ]
+    def _add_config_path(path: Path):
+        if not path.exists():
+            return
+        resolved = path.resolve()
+        if all(existing.resolve() != resolved for existing in config_paths):
+            config_paths.append(path)
 
-    if not original_cfg.exists():
+    _add_config_path(source_cfg)
+    _add_config_path(Path.cwd() / 'src' / 'odin_ros_driver' / 'config' / 'control_command.yaml')
+    try:
+        _add_config_path(Path(get_package_share_directory('odin_ros_driver')) / 'config' / 'control_command.yaml')
+    except Exception:
+        pass
+
+    if not config_paths:
         return [
-            LogInfo(msg=f'[sentry_bringup] ERROR: control_command.yaml not found at {original_cfg}')
+            LogInfo(msg='[sentry_bringup] ERROR: cannot locate control_command.yaml for Odin configuration.')
         ]
 
-    # Read original, modify in memory, write to temp file
-    text = original_cfg.read_text(encoding='utf-8')
-    data = yaml.safe_load(text)
-    _patch_yaml_dict(data, 'register_keys.custom_map_mode', custom_map_mode)
-    _patch_yaml_dict(data, 'register_keys.relocalization_map_abs_path', relocalization_map)
-
-    tmp = tempfile.NamedTemporaryFile(
-        mode='w', suffix='.yaml', prefix='odin_control_command_',
-        delete=False, encoding='utf-8')
-    yaml.dump(data, tmp, default_flow_style=False, allow_unicode=True)
-    tmp_path = tmp.name
-    tmp.close()
-
     actions = []
-    actions.append(LogInfo(msg=f'[sentry_bringup] Odin temp config written to {tmp_path}'))
+    restore_items = []
+    try:
+        for config_path in config_paths:
+            original_text = config_path.read_text(encoding='utf-8')
+            data = yaml.safe_load(original_text)
+            _patch_yaml_dict(data, 'register_keys.custom_map_mode', custom_map_mode)
+            _patch_yaml_dict(data, 'register_keys.relocalization_map_abs_path', relocalization_map)
+            if run_mode == 'nav':
+                _patch_yaml_dict(data, 'register_keys.use_host_ros_time', 1)
+
+            patched_text = yaml.dump(data, default_flow_style=False, allow_unicode=True)
+            if patched_text == original_text:
+                actions.append(LogInfo(msg=f'[sentry_bringup] Odin config already matches launch overrides: {config_path}'))
+                continue
+
+            config_path.write_text(patched_text, encoding='utf-8')
+            restore_items.append((config_path, original_text))
+            actions.append(LogInfo(msg=f'[sentry_bringup] Odin config patched for this launch: {config_path}'))
+    except Exception as exc:
+        for config_path, original_text in restore_items:
+            try:
+                config_path.write_text(original_text, encoding='utf-8')
+            except Exception:
+                pass
+        return [LogInfo(msg=f'[sentry_bringup] ERROR: failed to patch Odin config: {exc}')]
+
+    if restore_items:
+        def _restore_odin_configs(_context):
+            restore_actions = []
+            for config_path, original_text in restore_items:
+                try:
+                    config_path.write_text(original_text, encoding='utf-8')
+                    restore_actions.append(LogInfo(msg=f'[sentry_bringup] Odin config restored: {config_path}'))
+                except Exception as exc:
+                    restore_actions.append(LogInfo(msg=f'[sentry_bringup] WARNING: failed to restore Odin config {config_path}: {exc}'))
+            return restore_actions
+
+        actions.append(RegisterEventHandler(OnShutdown(
+            on_shutdown=[OpaqueFunction(function=_restore_odin_configs)]
+        )))
+
     actions.append(LogInfo(msg=f'[sentry_bringup] Odin mode: {odin_mode} (custom_map_mode={custom_map_mode})'))
+    if run_mode == 'nav':
+        actions.append(LogInfo(msg='[sentry_bringup] Odin nav timestamp mode: use_host_ros_time=1'))
 
     if odin_mode == 'relocalization' and not relocalization_map:
         actions.append(LogInfo(msg='[sentry_bringup] WARNING: odin_mode=relocalization but odin_relocalization_map is empty.'))
@@ -94,8 +132,8 @@ def _launch_odin_with_config(context):
         actions.append(LogInfo(msg='[sentry_bringup] WARNING: odin_mode=odom/slam in nav mode may accumulate odometry drift.'))
         actions.append(LogInfo(msg='[sentry_bringup] Recommendation: use odin_mode:=relocalization with odin_relocalization_map:=/abs/path/to/map.bin'))
 
-    # Build odin nodes directly (instead of IncludeLaunchDescription) so we can
-    # pass the temp config to host_sdk_sample without modifying odin_ros_driver.
+    # Build odin nodes directly (instead of IncludeLaunchDescription) so the
+    # launch-time config patch happens before host_sdk_sample starts.
     odin_pkg = get_package_share_directory('odin_ros_driver')
 
     # USB power-cycle
@@ -120,7 +158,6 @@ def _launch_odin_with_config(context):
             executable='host_sdk_sample',
             name='host_sdk_sample',
             output='screen',
-            parameters=[{'config_file': tmp_path}],
             additional_env=libusb_env,
         )]
     ))
@@ -243,7 +280,7 @@ def generate_launch_description():
         'decision', default_value='false', description='启动决策节点'
     )
     terrain_arg = DeclareLaunchArgument(
-        'terrain', default_value='true', description='启动地形分析'
+        'terrain', default_value='true', description='启动地形分析和动态避障'
     )
     region_detector_arg = DeclareLaunchArgument(
         'region_detector', default_value='true', description='启动区域检测节点'
@@ -359,6 +396,39 @@ def generate_launch_description():
             PythonExpression([
                 "'", LaunchConfiguration('mode'), "' == 'nav' and '",
                 LaunchConfiguration('region_detector'), "' == 'true'"
+            ])
+        )
+    )
+
+    # ========================================================================
+    # 4b. PointCloud2 → LaserScan 转换 (给全局动态避障层用)
+    # /traversability/obstacles (PointCloud2, odom) → /traversability/scan (LaserScan, base_link)
+    # DynamicScanLayer 会把 LaserScan 直接写入 global costmap，供全局规划绕开动态障碍。
+    # ========================================================================
+    pcl_to_scan_node = Node(
+        package='pointcloud_to_laserscan',
+        executable='pointcloud_to_laserscan_node',
+        name='traversability_to_scan',
+        output='screen',
+        remappings=[('cloud_in', '/traversability/obstacles'),
+                    ('scan', '/traversability/scan')],
+        parameters=[{
+            'target_frame': 'base_link',
+            'transform_tolerance': 0.2,
+            'min_height': -0.3,
+            'max_height': 2.0,
+            'angle_min': -3.14159,
+            'angle_max': 3.14159,
+            'angle_increment': 0.01745,  # 1 degree
+            'scan_time': 0.05,
+            'range_min': 0.3,
+            'range_max': 10.0,
+            'use_inf': True,
+        }],
+        condition=IfCondition(
+            PythonExpression([
+                "'", LaunchConfiguration('mode'), "' == 'nav' and '",
+                LaunchConfiguration('terrain'), "' == 'true'"
             ])
         )
     )
@@ -483,6 +553,7 @@ def generate_launch_description():
                 mapping_launch,
                 terrain_launch,
                 region_detector_launch,
+                pcl_to_scan_node,
                 nav_launch,
                 decision_launch,
                 comm_launch,
