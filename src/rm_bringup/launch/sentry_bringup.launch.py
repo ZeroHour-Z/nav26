@@ -257,9 +257,35 @@ def generate_launch_description():
         description='odin1重定位地图绝对路径，仅当 odin_mode=relocalization 生效'
     )
 
+    initial_x_arg = DeclareLaunchArgument(
+        'initial_x',
+        default_value='1.0',
+        description='初始 X 位置(map坐标系)'
+    )
+    initial_y_arg = DeclareLaunchArgument(
+        'initial_y',
+        default_value='-1.0',
+        description='初始 Y 位置(map坐标系)'
+    )
+    initial_z_arg = DeclareLaunchArgument(
+        'initial_z',
+        default_value='0.0',
+        description='初始 Z 位置(map坐标系)'
+    )
+    initial_yaw_arg = DeclareLaunchArgument(
+        'initial_yaw',
+        default_value='0.0',
+        description='初始航向角，单位 rad'
+    )
+    use_initial_pose_arg = DeclareLaunchArgument(
+        'use_initial_pose',
+        default_value='false',
+        description='mid360定位是否使用初始位姿；odin1下由map->odom静态TF使用initial_*'
+    )
+
     map_pcd_arg = DeclareLaunchArgument(
         'map_pcd',
-        default_value=PathJoinSubstitution([FindPackageShare("rm_bringup"), "PCD", "RMUC", "Mesh.pcd"]),
+        default_value=PathJoinSubstitution([FindPackageShare("rm_bringup"), "PCD", "siyuan2", "Mesh.pcd"]),
         description='3D 点云地图路径 (用于定位)'
     )
 
@@ -287,6 +313,22 @@ def generate_launch_description():
     )
     rviz_arg = DeclareLaunchArgument(
         'rviz', default_value='true', description='启动 RViz'
+    )
+    pcd_map_publisher_arg = DeclareLaunchArgument(
+        'pcd_map_publisher', default_value='false',
+        description='启动 PCD 地图发布器, 把 pcd_publisher_path 发布为 PointCloud2 到 RViz, 用于人工检查 odin1 重定位'
+    )
+    pcd_publisher_topic_arg = DeclareLaunchArgument(
+        'pcd_publisher_topic', default_value='/pcd_map',
+        description='PCD 地图发布话题'
+    )
+    pcd_publisher_rate_arg = DeclareLaunchArgument(
+        'pcd_publisher_rate', default_value='0.5',
+        description='PCD 地图发布频率 Hz (默认 0.5, 静态地图无需高频)'
+    )
+    pcd_publisher_path_arg = DeclareLaunchArgument(
+        'pcd_publisher_path', default_value=LaunchConfiguration('map_pcd'),
+        description='发布到 RViz 的 PCD 文件路径 (默认与 map_pcd 一致, 可单独指向 odin1 的输出 PCD)'
     )
 
     # ========================================================================
@@ -329,7 +371,12 @@ def generate_launch_description():
         launch_arguments={
             'backend': LaunchConfiguration('backend'),
             'map': LaunchConfiguration('map_pcd'),
-            'rviz': LaunchConfiguration('rviz')
+            'rviz': LaunchConfiguration('rviz'),
+            'initial_x': LaunchConfiguration('initial_x'),
+            'initial_y': LaunchConfiguration('initial_y'),
+            'initial_z': LaunchConfiguration('initial_z'),
+            'initial_yaw': LaunchConfiguration('initial_yaw'),
+            'use_initial_pose': LaunchConfiguration('use_initial_pose'),
         }.items(),
         condition=IfCondition(
             PythonExpression([
@@ -464,6 +511,10 @@ def generate_launch_description():
                     'publish_map_to_odom_tf': PythonExpression([
                         "'true' if '", LaunchConfiguration('lidar'), "' == 'odin1' else 'false'"
                     ]),
+                    'initial_x': LaunchConfiguration('initial_x'),
+                    'initial_y': LaunchConfiguration('initial_y'),
+                    'initial_z': LaunchConfiguration('initial_z'),
+                    'initial_yaw': LaunchConfiguration('initial_yaw'),
                 }.items(),
                 condition=IfCondition(
                     PythonExpression(["'", LaunchConfiguration('mode'), "' == 'nav'"])
@@ -520,6 +571,24 @@ def generate_launch_description():
     )
 
     # ========================================================================
+    # 8. PCD 地图发布 (可选, 用于 RViz 人工检查 odin1 重定位)
+    # ========================================================================
+    pcd_map_publisher_node = Node(
+        package='rm_bringup',
+        executable='pcd_publisher.py',
+        name='pcd_map_publisher',
+        output='screen',
+        arguments=[
+            LaunchConfiguration('pcd_publisher_path'),
+            '--topic', LaunchConfiguration('pcd_publisher_topic'),
+            '--frame', 'map',
+            '--rate', LaunchConfiguration('pcd_publisher_rate'),
+            '--latch',
+        ],
+        condition=IfCondition(LaunchConfiguration('pcd_map_publisher')),
+    )
+
+    # ========================================================================
     # 全局可视化
     # ========================================================================
     # 注意: RViz 的启动逻辑已下放到 slam_and_localize 和 slam_mapping_only 中。
@@ -533,6 +602,11 @@ def generate_launch_description():
         lidar_arg,
         odin_mode_arg,
         odin_relocalization_map_arg,
+        initial_x_arg,
+        initial_y_arg,
+        initial_z_arg,
+        initial_yaw_arg,
+        use_initial_pose_arg,
         map_pcd_arg,
         map_yaml_arg,
         driver_arg,
@@ -541,6 +615,10 @@ def generate_launch_description():
         terrain_arg,
         region_detector_arg,
         rviz_arg,
+        pcd_map_publisher_arg,
+        pcd_publisher_topic_arg,
+        pcd_publisher_rate_arg,
+        pcd_publisher_path_arg,
 
         OpaqueFunction(function=_launch_odin_with_config),
 
@@ -557,6 +635,7 @@ def generate_launch_description():
                 nav_launch,
                 decision_launch,
                 comm_launch,
+                pcd_map_publisher_node,
             ],
             condition=UnlessCondition(LaunchConfiguration('sim')),
         ),

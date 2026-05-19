@@ -44,8 +44,8 @@ public:
         this->declare_parameter<std::string>("map_frame", "map");
         this->declare_parameter<bool>("enable_chase", true); // 是否启用追击功能
         this->declare_parameter<std::string>("odom_topic", "/odom");
-        this->declare_parameter<std::string>("cmd_vel_frame", "base_link");
-        this->declare_parameter<std::string>("angular_z_mode", "yaw_rate");
+        this->declare_parameter<std::string>("cmd_vel_frame", "map");
+        this->declare_parameter<std::string>("angular_z_mode", "yaw_angle");
         this->declare_parameter<double>("yaw_rate_preview_time", 0.15);
         this->declare_parameter<bool>("smooth_world_velocity", true);
         this->declare_parameter<double>("world_velocity_filter_tau", 0.12);
@@ -510,26 +510,6 @@ private:
 
         // 记录状态变化
         if (cmd.eSentryState != last_sentry_state_) {
-            const char* state_names[] = { "standby",
-                                          "attack",
-                                          "patrol",
-                                          "stationary_defense",
-                                          "constrained_defense",
-                                          "error",
-                                          "logic",
-                                          "pursuit",
-                                          "supply",
-                                          "go_attack_outpost",
-                                          "hit_energy_buff",
-                                          "occupy_point",
-                                          "repel" };
-            int state_idx = static_cast<int>(cmd.eSentryState);
-            const char* state_name =
-                (state_idx >= 0
-                 && state_idx < static_cast<int>(sizeof(state_names) / sizeof(state_names[0])))
-                ? state_names[state_idx]
-                : "unknown";
-            // RCLCPP_INFO(this->get_logger(), "Sentry state changed: %s (%d)", state_name, state_idx);
             last_sentry_state_ = static_cast<sentry_state_e>(cmd.eSentryState);
         }
     }
@@ -762,8 +742,8 @@ private:
     std::string chase_topic_ { "/chase_point" };
     std::string map_frame_ { "map" };
     std::string odom_topic_ { "/odom" };
-    std::string cmd_vel_frame_ { "base_link" };
-    std::string angular_z_mode_ { "yaw_rate" };
+    std::string cmd_vel_frame_ { "map" };
+    std::string angular_z_mode_ { "yaw_angle" };
     double yaw_rate_preview_time_ { 0.15 };
     bool smooth_world_velocity_ { true };
     double world_velocity_filter_tau_ { 0.12 };

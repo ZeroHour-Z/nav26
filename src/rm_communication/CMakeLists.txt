@@ -36,9 +36,13 @@ add_executable(handler_node src/handler_node.cpp)
 target_link_libraries(handler_node rm_comm_protocol)
 ament_target_dependencies(handler_node rclcpp std_msgs geometry_msgs nav_msgs tf2 tf2_ros tf2_geometry_msgs)
 
+add_executable(aim_udp_bridge_node src/aim_udp_bridge_node.cpp)
+ament_target_dependencies(aim_udp_bridge_node rclcpp std_msgs)
+
 install(TARGETS
   serial_rw_node
   handler_node
+  aim_udp_bridge_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

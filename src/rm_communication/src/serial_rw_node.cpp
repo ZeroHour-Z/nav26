@@ -57,9 +57,10 @@ constexpr uint8_t kNavTailTx = 0x4D; // navInfo_t 帧尾   （PC   -> 电控）
 
 constexpr uint8_t kAimHeader = 0x71;
 constexpr uint8_t kAimTail = 0x4C;
-// aim 协议的 Translator 用 #pragma pack(1)，MessData_AutoAim 实际 61B，
-// union 强制为 64B（末尾 3B 为 padding），因此 tail 在 byte[60] 而非 byte[63]。
-constexpr size_t kAimTailOffset = 60;
+// aim 两种 union 视图的 tail 位置不同：
+// MessData_AutoAim tail 在 byte[54]，MessData_WM tail 在 byte[60]。
+constexpr size_t kAimAutoTailOffset = 54;
+constexpr size_t kAimWmTailOffset = 60;
 
 static_assert(sizeof(navCommand_t) == kFrameSize, "navCommand_t must be 64 bytes");
 static_assert(sizeof(navInfo_t) == kFrameSize, "navInfo_t must be 64 bytes");
@@ -168,17 +169,28 @@ private:
             );
             return;
         }
-        if (msg->data.front() != kAimHeader || msg->data[kAimTailOffset] != kAimTail) {
+        const bool has_aim_tail = msg->data[kAimAutoTailOffset] == kAimTail ||
+                                  msg->data[kAimWmTailOffset] == kAimTail;
+        if (msg->data.front() != kAimHeader || !has_aim_tail) {
             RCLCPP_WARN_THROTTLE(
                 this->get_logger(),
                 *this->get_clock(),
                 2000,
-                "[aim] tx_packet bad framing head=0x%02X tail@60=0x%02X, drop",
+                "[aim] tx_packet bad framing head=0x%02X tail@54=0x%02X tail@60=0x%02X, drop",
                 (unsigned)msg->data.front(),
-                (unsigned)msg->data[kAimTailOffset]
+                (unsigned)msg->data[kAimAutoTailOffset],
+                (unsigned)msg->data[kAimWmTailOffset]
             );
             return;
         }
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            1000,
+            "[aim] TX accepted, writing 64B to serial tail@54=0x%02X tail@60=0x%02X",
+            (unsigned)msg->data[kAimAutoTailOffset],
+            (unsigned)msg->data[kAimWmTailOffset]
+        );
         writeBytes(msg->data.data(), msg->data.size(), "aim");
     }
 
@@ -295,11 +307,12 @@ private:
             if (header == kNavHeader && rx_buffer_[kFrameSize - 1] == kNavTailRx) {
                 ok = true;
             } else if (header == kAimHeader) {
-                // 兼容性：电控当前未在 byte[60] 写入 0x4C tail（实测全 0），
-                // 因此 aim 通道改为：优先匹配显式 tail；若 tail 未填，则用
+                // 兼容性：aim 两种结构 tail 分别在 byte[54]/byte[60]；
+                // 若电控未填 tail，则用
                 // "下一字节是另一个合法帧头(0x71/0x72)" 作为 64B 边界校验。
                 // 这样既能恢复链路，又能在帧间错位时拒收以重同步。
-                if (rx_buffer_[kAimTailOffset] == kAimTail) {
+                if (rx_buffer_[kAimAutoTailOffset] == kAimTail ||
+                    rx_buffer_[kAimWmTailOffset] == kAimTail) {
                     ok = true;
                 } else if (rx_buffer_.size() >= kFrameSize + 1) {
                     const uint8_t next = rx_buffer_[kFrameSize];
@@ -307,10 +320,11 @@ private:
                         ok = true;
                         RCLCPP_WARN_ONCE(
                             this->get_logger(),
-                            "[aim] tail byte[60]=0x%02X != 0x4C; accepting based on "
+                            "[aim] tail byte[54]=0x%02X byte[60]=0x%02X != 0x4C; accepting based on "
                             "64B alignment (next head=0x%02X). MCU should write "
-                            "frame[60]=0x4C for stricter validation.",
-                            (unsigned)rx_buffer_[kAimTailOffset],
+                            "frame tail for stricter validation.",
+                            (unsigned)rx_buffer_[kAimAutoTailOffset],
+                            (unsigned)rx_buffer_[kAimWmTailOffset],
                             (unsigned)next
                         );
                     }

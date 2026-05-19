@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition, UnlessCondition
+from launch.conditions import IfCondition
 from launch.substitutions import PathJoinSubstitution, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -29,11 +29,25 @@ def generate_launch_description():
         default_value='false',
         description='Publish static TF map->odom for odom-only sources'
     )
-
-    use_gvc_arg = DeclareLaunchArgument(
-        'use_gvc',
-        default_value='false',
-        description='Start global_velocity_controller. Default false: Nav2 MPPI publishes /cmd_vel directly.'
+    initial_x_arg = DeclareLaunchArgument(
+        'initial_x',
+        default_value='0.0',
+        description='Initial map->odom x used when publishing static map->odom TF'
+    )
+    initial_y_arg = DeclareLaunchArgument(
+        'initial_y',
+        default_value='0.0',
+        description='Initial map->odom y used when publishing static map->odom TF'
+    )
+    initial_z_arg = DeclareLaunchArgument(
+        'initial_z',
+        default_value='0.0',
+        description='Initial map->odom z used when publishing static map->odom TF'
+    )
+    initial_yaw_arg = DeclareLaunchArgument(
+        'initial_yaw',
+        default_value='0.0',
+        description='Initial map->odom yaw used when publishing static map->odom TF'
     )
 
     # 默认地图路径
@@ -101,7 +115,10 @@ def generate_launch_description():
         gvc_odom_topic_arg,
         gvc_base_frame_arg,
         publish_map_to_odom_tf_arg,
-        use_gvc_arg,
+        initial_x_arg,
+        initial_y_arg,
+        initial_z_arg,
+        initial_yaw_arg,
         LogInfo(msg=["Loading map from: ", LaunchConfiguration('map')]),
     ]
 
@@ -124,7 +141,16 @@ def generate_launch_description():
             executable="static_transform_publisher",
             name="static_map_to_odom",
             output="screen",
-            arguments=["0", "0", "0", "0", "0", "0", "map", "odom"],
+            arguments=[
+                LaunchConfiguration('initial_x'),
+                LaunchConfiguration('initial_y'),
+                LaunchConfiguration('initial_z'),
+                LaunchConfiguration('initial_yaw'),
+                "0",
+                "0",
+                "map",
+                "odom",
+            ],
             condition=IfCondition(LaunchConfiguration('publish_map_to_odom_tf')),
         )
     )
@@ -143,16 +169,8 @@ def generate_launch_description():
                 executable="controller_server",
                 name="controller_server",
                 output="screen",
-                condition=UnlessCondition(LaunchConfiguration('use_gvc')),
                 parameters=[default_params, {"use_sim_time": use_sim_time}],
-            ),
-            Node(
-                package="nav2_controller",
-                executable="controller_server",
-                name="controller_server",
-                output="screen",
-                condition=IfCondition(LaunchConfiguration('use_gvc')),
-                parameters=[default_params, {"use_sim_time": use_sim_time}],
+                # Nav2输出到中间话题，GVC处理后输出到/cmd_vel
                 remappings=[("/cmd_vel", "/nav2_cmd_vel")],
             ),
             Node(
@@ -205,14 +223,13 @@ def generate_launch_description():
         )
     )
 
-    # 默认由 Nav2 MPPI 直接发布 /cmd_vel。GVC 保留为显式调试选项。
+    # GVC作为中间层，订阅Nav2的输出并发布到底盘
     nodes.append(
         Node(
             package="global_velocity_controller",
             executable="global_velocity_controller_node",
             name="global_velocity_controller",
             output="screen",
-            condition=IfCondition(LaunchConfiguration('use_gvc')),
             parameters=[
                 gvc_params,
                 gvc_tracker_params,
