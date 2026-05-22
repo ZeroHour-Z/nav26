@@ -76,6 +76,9 @@ public:
         this->declare_parameter<std::vector<double>>("fluctuate_region_3", std::vector<double> {});
         this->declare_parameter<double>("fluctuate_region_3_yaw", 0.0);
 
+        this->declare_parameter<std::vector<double>>("fluctuate_region_4", std::vector<double> {});
+        this->declare_parameter<double>("fluctuate_region_4_yaw", 0.0);
+
         // 地图三区域多边形参数（map坐标系）
         this->declare_parameter<std::vector<double>>("self_base_region", std::vector<double> {});
         this->declare_parameter<std::vector<double>>(
@@ -201,6 +204,13 @@ private:
             "Fluctuate3",
             REGION_FLUCTUATE
         );
+        // 加载颠簸区域4
+        loadSingleRegion(
+            "fluctuate_region_4",
+            "fluctuate_region_4_yaw",
+            "Fluctuate4",
+            REGION_FLUCTUATE
+        );
     }
 
     void loadSingleRegion(
@@ -284,6 +294,66 @@ private:
             min_dist = std::min(min_dist, dist);
         }
         return min_dist;
+    }
+
+    bool computePathYawInRegion(size_t region_index, double robot_x, double robot_y, double& yaw)
+        const {
+        if (!has_path_ || region_index >= regions_.size() || last_path_.poses.size() < 2) {
+            return false;
+        }
+
+        const auto& polygon = regions_[region_index].polygon;
+        size_t closest_inside_idx = 0;
+        double closest_dist_sq = std::numeric_limits<double>::max();
+        bool found_inside = false;
+
+        for (size_t i = 0; i < last_path_.poses.size(); ++i) {
+            const auto& p = last_path_.poses[i].pose.position;
+            if (!isPointInPolygon(p.x, p.y, polygon)) {
+                continue;
+            }
+
+            const double dx = p.x - robot_x;
+            const double dy = p.y - robot_y;
+            const double dist_sq = dx * dx + dy * dy;
+            if (dist_sq < closest_dist_sq) {
+                closest_dist_sq = dist_sq;
+                closest_inside_idx = i;
+                found_inside = true;
+            }
+        }
+
+        if (!found_inside) {
+            return false;
+        }
+
+        auto segmentYaw = [&](size_t from, size_t to, double& out_yaw) {
+            const auto& a = last_path_.poses[from].pose.position;
+            const auto& b = last_path_.poses[to].pose.position;
+            const double dx = b.x - a.x;
+            const double dy = b.y - a.y;
+            if (std::hypot(dx, dy) < 1e-4) {
+                return false;
+            }
+            out_yaw = std::atan2(dy, dx);
+            return true;
+        };
+
+        for (size_t i = closest_inside_idx; i + 1 < last_path_.poses.size(); ++i) {
+            const auto& p = last_path_.poses[i + 1].pose.position;
+            if (isPointInPolygon(p.x, p.y, polygon) && segmentYaw(i, i + 1, yaw)) {
+                return true;
+            }
+        }
+
+        for (size_t i = closest_inside_idx; i > 0; --i) {
+            const auto& p = last_path_.poses[i - 1].pose.position;
+            if (isPointInPolygon(p.x, p.y, polygon) && segmentYaw(i - 1, i, yaw)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // 路径回调
@@ -431,6 +501,9 @@ private:
             if (isPointInPolygon(robot_x, robot_y, region.polygon)) {
                 current_region = region.type;
                 yaw_desired = region.yaw_desired;
+                if (region.type == REGION_FLUCTUATE) {
+                    (void)computePathYawInRegion(i, robot_x, robot_y, yaw_desired);
+                }
                 in_special_region = true;
 
                 // RCLCPP_INFO_THROTTLE(
@@ -451,6 +524,9 @@ private:
                 if (dist < lookahead_dist) {
                     current_region = region.type;
                     yaw_desired = region.yaw_desired;
+                    if (region.type == REGION_FLUCTUATE) {
+                        (void)computePathYawInRegion(i, robot_x, robot_y, yaw_desired);
+                    }
                     in_special_region = true;
 
                     RCLCPP_INFO_THROTTLE(

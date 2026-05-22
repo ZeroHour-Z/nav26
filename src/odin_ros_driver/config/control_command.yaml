@@ -8,7 +8,7 @@ register_keys:
   - 0.0
   - 0.0
   - 1.0
-  custom_map_mode: 0
+  custom_map_mode: 2
   devstatuslog: 1
   dtof_fps: 100
   enable_imu_smooth: 0
@@ -22,7 +22,7 @@ register_keys:
   overlay_reprojected_topic: /odin1/reprojected_image
   pubintensitygray: 0
   recorddata: 0
-  relocalization_map_abs_path: ''
+  relocalization_map_abs_path: /home/xjturm/xjtu_nav26/src/odin_ros_driver/map/20260521_223913/map_20260521_224044.bin
   resetalgo: 0
   save_log: 0
   send_odom_baselink_tf: 1
@@ -42,4 +42,4 @@ register_keys:
   showpath: 0
   streamctrl: 1
   strict_usb3.0_check: 0
-  use_host_ros_time: 0
+  use_host_ros_time: 1

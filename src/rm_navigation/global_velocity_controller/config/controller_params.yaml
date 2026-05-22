@@ -18,8 +18,8 @@ global_velocity_controller:
     kd_yaw: 0.0
 
     # Limits
-    max_vx: 1.0
-    max_vy: 1.0
+    max_vx: 0.6
+    max_vy: 0.6
     max_wz: 1.0  # 提高到5.0，不限制陀螺角速度
 
     anti_windup_integral_limit_xy: 0.5
@@ -41,8 +41,8 @@ global_velocity_controller:
     stop_angular_threshold: 0.03
 
     # Command rate limiting (non-symmetric: decel > accel to counter omni wheel roller slip)
-    cmd_accel_limit_linear: 2.0   # 加速率 m/s²
-    cmd_decel_limit_linear: 5.0   # 减速率 m/s²（全向轮需要更快制动）
+    cmd_accel_limit_linear: 1.2   # 加速率 m/s²，降低起步/转向冲击
+    cmd_decel_limit_linear: 6.0   # 减速率 m/s²（全向轮需要更快制动）
     cmd_accel_limit_angular: 4.0 
 
     # Escape mode params
@@ -50,7 +50,7 @@ global_velocity_controller:
     escape_enter_cost_threshold: 99
     escape_target_cost_threshold: 95        # 一直逃到free
     escape_treat_unknown_as_lethal: false
-    escape_speed: 0.8
+    escape_speed: 0.35
     escape_goal_tolerance: 0.05
     escape_max_radius_cells: 200
     escape_enter_delay_s: 1.0

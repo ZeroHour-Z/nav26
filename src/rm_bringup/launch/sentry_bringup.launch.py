@@ -247,24 +247,24 @@ def generate_launch_description():
 
     odin_mode_arg = DeclareLaunchArgument(
         'odin_mode',
-        default_value='odom',
+        default_value='relocalization',
         description='odin1内置模式: odom | slam | relocalization'
     )
 
     odin_relocalization_map_arg = DeclareLaunchArgument(
         'odin_relocalization_map',
-        default_value='',
+        default_value='/home/xjturm/xjtu_nav26/src/odin_ros_driver/map/20260521_223913/map_20260521_224044.bin',
         description='odin1重定位地图绝对路径，仅当 odin_mode=relocalization 生效'
     )
 
     initial_x_arg = DeclareLaunchArgument(
         'initial_x',
-        default_value='1.0',
+        default_value='10.0',
         description='初始 X 位置(map坐标系)'
     )
     initial_y_arg = DeclareLaunchArgument(
         'initial_y',
-        default_value='-1.0',
+        default_value='0.0',
         description='初始 Y 位置(map坐标系)'
     )
     initial_z_arg = DeclareLaunchArgument(
@@ -285,13 +285,13 @@ def generate_launch_description():
 
     map_pcd_arg = DeclareLaunchArgument(
         'map_pcd',
-        default_value=PathJoinSubstitution([FindPackageShare("rm_bringup"), "PCD", "siyuan2", "Mesh.pcd"]),
+        default_value=PathJoinSubstitution([FindPackageShare("rm_bringup"), "PCD", "siyuan2", "M.pcd"]),
         description='3D 点云地图路径 (用于定位)'
     )
 
     map_yaml_arg = DeclareLaunchArgument(
         'map_yaml',
-        default_value=PathJoinSubstitution([FindPackageShare("rm_bringup"), "PCD", "RMUC", "map.yaml"]),
+        default_value=PathJoinSubstitution([FindPackageShare("rm_bringup"), "PCD", "RMUC", "map4.yaml"]),
         description='2D 栅格地图路径 (用于导航)'
     )
 

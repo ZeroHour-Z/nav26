@@ -653,16 +653,9 @@ private:
             ? static_cast<uint8_t>(sentry_region::hole)
             : current_region_;
 
-        // 如果在特殊区域（如颠簸区域），使用区域指定的航向角
+        // fluctuate 仍按 hole 上报给电控，航向使用 region_detector 从区域内路径段计算出的切向角。
         if (region_active_ && current_region_ == sentry_region::fluctuate) {
             nav_info_.yaw_desired = region_yaw_desired_;
-            // RCLCPP_INFO_THROTTLE(
-            //     this->get_logger(),
-            //     *this->get_clock(),
-            //     1000,
-            //     "In fluctuate region, yaw_desired=%.2f (reported as hole)",
-            //     region_yaw_desired_
-            // );
         }
 
         double target_x = 0.0, target_y = 0.0;
