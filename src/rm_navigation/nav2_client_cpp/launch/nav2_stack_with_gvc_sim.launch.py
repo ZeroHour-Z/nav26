@@ -35,6 +35,16 @@ def generate_launch_description():
     sim_init_x_arg = DeclareLaunchArgument('sim_init_x', default_value='0.0')
     sim_init_y_arg = DeclareLaunchArgument('sim_init_y', default_value='0.0')
     sim_init_yaw_arg = DeclareLaunchArgument('sim_init_yaw', default_value='0.0')
+    sim_velocity_gain_arg = DeclareLaunchArgument(
+        'sim_velocity_gain',
+        default_value='1.5',
+        description='Linear velocity gain applied only to the built-in 2D simulator'
+    )
+    sim_spin_rate_arg = DeclareLaunchArgument(
+        'sim_spin_rate',
+        default_value='2.0',
+        description='Constant yaw rate (rad/s) applied to the simulated chassis frame'
+    )
 
     map_yaml_param = ParameterValue(LaunchConfiguration('map'), value_type=str)
 
@@ -74,6 +84,8 @@ def generate_launch_description():
         sim_init_x_arg,
         sim_init_y_arg,
         sim_init_yaw_arg,
+        sim_velocity_gain_arg,
+        sim_spin_rate_arg,
         LogInfo(msg=["[sim] Loading map from: ", LaunchConfiguration('map')]),
     ]
 
@@ -112,6 +124,7 @@ def generate_launch_description():
             name="controller_server",
             output="screen",
             parameters=[default_params, {"use_sim_time": use_sim_time}],
+            remappings=[("/cmd_vel", "/nav2_cmd_vel")],
         ),
         Node(
             package="nav2_behaviors",
@@ -129,6 +142,7 @@ def generate_launch_description():
                 default_params,
                 {
                     "use_sim_time": use_sim_time,
+                    "bt_loop_duration": 50,
                     "default_bt_xml_filename": default_bt_xml,
                     "default_nav_to_pose_bt_xml": default_nav_to_pose_bt_xml,
                     "default_nav_through_poses_bt_xml": default_nav_through_poses_bt_xml,
@@ -173,6 +187,20 @@ def generate_launch_description():
                     "use_sim_time": use_sim_time,
                     "simulate": True,
                     "sim_tf_parent_frame": "odom",
+                    "sim_odom_topic": "/odom",
+                    "sim_follow_target_yaw": True,
+                    "sim_yaw_kp": 4.0,
+                    "sim_max_wz": 1.0,
+                    "sim_spin_enabled": True,
+                    "sim_spin_rate": ParameterValue(
+                        LaunchConfiguration('sim_spin_rate'),
+                        value_type=float,
+                    ),
+                    "sim_velocity_gain": ParameterValue(
+                        LaunchConfiguration('sim_velocity_gain'),
+                        value_type=float,
+                    ),
+                    "sim_use_region_yaw_override": True,
                     "map_frame": "map",
                     "base_frame": "base_link",
                     "enable_dynamic_lookahead": True,

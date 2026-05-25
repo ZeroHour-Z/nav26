@@ -229,8 +229,13 @@ def generate_launch_description():
 
     sim_arg = DeclareLaunchArgument(
         'sim',
-        default_value='false',
-        description='仿真模式: 为 true 时跳过驱动/定位/地形分析，仅启动 Nav2 + GVC 仿真器'
+        default_value='true',
+        description='仿真模式: 为 true 时跳过驱动/定位/点云地形分析，使用 GVC 仿真器发布 TF/odom'
+    )
+    sim_control_panel_arg = DeclareLaunchArgument(
+        'sim_control_panel',
+        default_value='true',
+        description='仿真模式下是否启动电控 GUI 面板'
     )
 
     backend_arg = DeclareLaunchArgument(
@@ -247,7 +252,7 @@ def generate_launch_description():
 
     odin_mode_arg = DeclareLaunchArgument(
         'odin_mode',
-        default_value='relocalization',
+        default_value='odom',
         description='odin1内置模式: odom | slam | relocalization'
     )
 
@@ -537,6 +542,9 @@ def generate_launch_description():
         launch_arguments={
             'map': LaunchConfiguration('map_yaml'),
             'rviz': LaunchConfiguration('rviz'),
+            'sim_init_x': LaunchConfiguration('initial_x'),
+            'sim_init_y': LaunchConfiguration('initial_y'),
+            'sim_init_yaw': LaunchConfiguration('initial_yaw'),
         }.items(),
     )
 
@@ -567,6 +575,10 @@ def generate_launch_description():
                 'communication_bringup.launch.py'
             ])
         ),
+        launch_arguments={
+            'sim_serial': LaunchConfiguration('sim'),
+            'sim_control_panel': LaunchConfiguration('sim_control_panel'),
+        }.items(),
         condition=IfCondition(LaunchConfiguration('comm'))
     )
 
@@ -598,6 +610,7 @@ def generate_launch_description():
     return LaunchDescription([
         mode_arg,
         sim_arg,
+        sim_control_panel_arg,
         backend_arg,
         lidar_arg,
         odin_mode_arg,
@@ -640,10 +653,14 @@ def generate_launch_description():
             condition=UnlessCondition(LaunchConfiguration('sim')),
         ),
 
-        # 仿真路径：仅 Nav2 + GVC 仿真器
+        # 仿真路径：复用真实导航外围节点，跳过驱动、定位和点云地形分析。
         GroupAction(
             actions=[
                 sim_nav_launch,
+                region_detector_launch,
+                decision_launch,
+                comm_launch,
+                pcd_map_publisher_node,
             ],
             condition=IfCondition(LaunchConfiguration('sim')),
         ),

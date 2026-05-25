@@ -5,6 +5,8 @@ global_velocity_controller:
     sim_init_x: 0.0
     sim_init_y: 0.0
     sim_init_yaw: 0.0
+    sim_spin_enabled: false
+    sim_spin_rate: 1.5
 
     # Measurement noise (applied to body-frame velocity feedback)
     sim_linear_noise_std: 0.0   # m/s (1-sigma)

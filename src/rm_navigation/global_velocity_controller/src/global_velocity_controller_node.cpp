@@ -4,6 +4,8 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "std_msgs/msg/float32.hpp"
+#include "std_msgs/msg/u_int8.hpp"
 #include "tf2/LinearMath/Matrix3x3.h"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
@@ -25,11 +27,6 @@
 #include "global_velocity_controller/simulator_2d.hpp"
 // 注意: gvc::Simulator2D 依赖于 types.hpp, 这里假设它存在
 #include "global_velocity_controller/types.hpp"
-
-// 仿真中使用的角速度。由于 GVC 发布的是 map 系线速度，而 Simulator2D
-// 会按当前 yaw 将其视为 body 系并旋转积分，这里固定 yaw 不旋转，使
-// map 与 body 对齐(初始 yaw=0)，保证仿真轨迹与规划一致。
-const double SIM_OMEGA = 0.0;
 
 using std::placeholders::_1;
 
@@ -89,6 +86,13 @@ public:
         declare_parameter<double>("sim_init_x", 0.0);
         declare_parameter<double>("sim_init_y", 0.0);
         declare_parameter<double>("sim_init_yaw", 0.0);
+        declare_parameter<std::string>("sim_odom_topic", "/odom");
+        declare_parameter<bool>("sim_follow_target_yaw", true);
+        declare_parameter<double>("sim_yaw_kp", 4.0);
+        declare_parameter<double>("sim_max_wz", 1.0);
+        declare_parameter<bool>("sim_spin_enabled", false);
+        declare_parameter<double>("sim_spin_rate", 1.5);
+        declare_parameter<bool>("sim_use_region_yaw_override", true);
         declare_parameter<double>("max_dt", 0.05);
         // 仿真 TF 发布的父坐标系；留空则回退到 map_frame。
         // 当与 Nav2 一起仿真时，应设置为 "odom" 并由外部发布静态 map->odom TF，
@@ -99,6 +103,7 @@ public:
         declare_parameter<bool>("sim_external_cmd_vel", false);
         declare_parameter<std::string>("sim_cmd_vel_topic", "/cmd_vel");
         declare_parameter<double>("sim_cmd_vel_timeout", 0.3);
+        declare_parameter<double>("sim_velocity_gain", 1.0);
 
         // Escape mode params (from gvc_old)
         declare_parameter<int>("escape_free_cost_value", 0);
@@ -159,6 +164,13 @@ public:
         simulate_ = get_parameter("simulate").as_bool();
         sim_external_cmd_vel_ = get_parameter("sim_external_cmd_vel").as_bool();
         sim_cmd_vel_timeout_ = get_parameter("sim_cmd_vel_timeout").as_double();
+        sim_velocity_gain_ = std::max(0.0, get_parameter("sim_velocity_gain").as_double());
+        sim_follow_target_yaw_ = get_parameter("sim_follow_target_yaw").as_bool();
+        sim_yaw_kp_ = get_parameter("sim_yaw_kp").as_double();
+        sim_max_wz_ = get_parameter("sim_max_wz").as_double();
+        sim_spin_enabled_ = get_parameter("sim_spin_enabled").as_bool();
+        sim_spin_rate_ = get_parameter("sim_spin_rate").as_double();
+        sim_use_region_yaw_override_ = get_parameter("sim_use_region_yaw_override").as_bool();
         sim_tf_parent_frame_ = get_parameter("sim_tf_parent_frame").as_string();
         if (sim_tf_parent_frame_.empty()) {
             sim_tf_parent_frame_ = map_frame_;
@@ -169,7 +181,13 @@ public:
             sim_config.init_y = get_parameter("sim_init_y").as_double();
             sim_config.init_yaw = get_parameter("sim_init_yaw").as_double();
             simulator_ = gvc::Simulator2D(sim_config);
-            RCLCPP_INFO(get_logger(), "Simulation mode is ON.");
+            RCLCPP_INFO(
+                get_logger(),
+                "Simulation mode is ON, sim_velocity_gain=%.2f, sim_spin_enabled=%s, sim_spin_rate=%.2f.",
+                sim_velocity_gain_,
+                sim_spin_enabled_ ? "true" : "false",
+                sim_spin_rate_
+            );
             if (sim_external_cmd_vel_) {
                 RCLCPP_INFO(
                     get_logger(),
@@ -184,6 +202,24 @@ public:
             get_parameter("cmd_vel_topic").as_string(),
             10
         );
+        if (simulate_) {
+            sim_odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(
+                get_parameter("sim_odom_topic").as_string(),
+                10
+            );
+            if (sim_use_region_yaw_override_) {
+                region_sub_ = create_subscription<std_msgs::msg::UInt8>(
+                    "/region_type",
+                    10,
+                    std::bind(&SimplifiedControllerNode::onRegionType, this, _1)
+                );
+                region_yaw_sub_ = create_subscription<std_msgs::msg::Float32>(
+                    "/region_yaw_desired",
+                    10,
+                    std::bind(&SimplifiedControllerNode::onRegionYaw, this, _1)
+                );
+            }
+        }
         if (simulate_ && sim_external_cmd_vel_) {
             external_cmd_sub_ = create_subscription<geometry_msgs::msg::Twist>(
                 get_parameter("sim_cmd_vel_topic").as_string(),
@@ -267,6 +303,15 @@ private:
         has_external_cmd_ = true;
     }
 
+    void onRegionType(const std_msgs::msg::UInt8::SharedPtr msg) {
+        current_region_ = msg->data;
+        region_active_ = current_region_ != REGION_FLAT;
+    }
+
+    void onRegionYaw(const std_msgs::msg::Float32::SharedPtr msg) {
+        region_yaw_desired_ = msg->data;
+    }
+
     void onControlTimer() {
         const rclcpp::Time now = get_clock()->now();
         if (simulate_ && sim_external_cmd_vel_) {
@@ -277,7 +322,7 @@ private:
         // If currently escaping, skip normal control (escape timer will publish)
         if (in_escape_mode_) {
             if (simulate_)
-                publishSimulatedTransform(now);
+                publishSimulatedTransformWithIdleSpin(now);
             return;
         }
 
@@ -287,7 +332,7 @@ private:
             if (locked_elapsed < goal_lock_duration_) {
                 publishZeroTwist();
                 if (simulate_)
-                    publishSimulatedTransform(now);
+                    publishSimulatedTransformWithIdleSpin(now);
                 return;
             }
             goal_locked_ = false;
@@ -310,7 +355,7 @@ private:
             // 没有路径也不在逃逸时，停止机器人，并在仿真下持续发布TF
             publishZeroTwist();
             if (simulate_)
-                publishSimulatedTransform(now);
+                publishSimulatedTransformWithIdleSpin(now);
             return;
         }
 
@@ -506,7 +551,14 @@ private:
 
         if (simulate_) {
             // cmd.linear 是 map(world) 系速度，直接按世界系积分
-            simulator_.integrateWorldCommand({ cmd.linear.x, cmd.linear.y, SIM_OMEGA }, dt);
+            alignSimYawToFluctuateRegion();
+            const double sim_wz = computeSimYawRate(cmd.angular.z, current_yaw);
+            const double sim_vx = cmd.linear.x * sim_velocity_gain_;
+            const double sim_vy = cmd.linear.y * sim_velocity_gain_;
+            simulator_.integrateWorldCommand({ sim_vx, sim_vy, sim_wz }, dt);
+            last_sim_vx_ = sim_vx;
+            last_sim_vy_ = sim_vy;
+            last_sim_wz_ = sim_wz;
             publishSimulatedTransform(now);
         }
     }
@@ -706,7 +758,14 @@ private:
         last_cmd_wz_ = cmd.angular.z;
 
         if (simulate_) {
-            simulator_.integrateWorldCommand({ cmd.linear.x, cmd.linear.y, SIM_OMEGA }, dt);
+            alignSimYawToFluctuateRegion();
+            const double sim_wz = computeSimYawRate(cmd.angular.z, current_yaw);
+            const double sim_vx = cmd.linear.x * sim_velocity_gain_;
+            const double sim_vy = cmd.linear.y * sim_velocity_gain_;
+            simulator_.integrateWorldCommand({ sim_vx, sim_vy, sim_wz }, dt);
+            last_sim_vx_ = sim_vx;
+            last_sim_vy_ = sim_vy;
+            last_sim_wz_ = sim_wz;
             publishSimulatedTransform(now);
         }
     }
@@ -1015,6 +1074,9 @@ private:
         last_cmd_vx_ = 0.0;
         last_cmd_vy_ = 0.0;
         last_cmd_wz_ = 0.0;
+        last_sim_vx_ = 0.0;
+        last_sim_vy_ = 0.0;
+        last_sim_wz_ = 0.0;
     }
 
     void integrateExternalCmdVel(const rclcpp::Time& now) {
@@ -1039,10 +1101,19 @@ private:
             cmd = last_external_cmd_;
         }
 
-        simulator_.integrateBodyCommand({ cmd.linear.x, cmd.linear.y, cmd.angular.z }, dt);
+        const double sim_vx = cmd.linear.x * sim_velocity_gain_;
+        const double sim_vy = cmd.linear.y * sim_velocity_gain_;
+        alignSimYawToFluctuateRegion();
+        const double sim_wz = shouldLockSimYawToFluctuateRegion()
+            ? 0.0
+            : (sim_spin_enabled_ ? sim_spin_rate_ : cmd.angular.z);
+        simulator_.integrateBodyCommand({ sim_vx, sim_vy, sim_wz }, dt);
         last_cmd_vx_ = cmd.linear.x;
         last_cmd_vy_ = cmd.linear.y;
         last_cmd_wz_ = cmd.angular.z;
+        last_sim_vx_ = sim_vx;
+        last_sim_vy_ = sim_vy;
+        last_sim_wz_ = sim_wz;
         publishSimulatedTransform(now);
     }
 
@@ -1062,6 +1133,75 @@ private:
         prev_yaw_ = 0.0;
     }
 
+    double computeSimYawRate(double target_yaw, double current_yaw) const {
+        if (shouldLockSimYawToFluctuateRegion()) {
+            return 0.0;
+        }
+        if (sim_spin_enabled_) {
+            return sim_spin_rate_;
+        }
+        if (!sim_follow_target_yaw_) {
+            return 0.0;
+        }
+
+        double desired_yaw = target_yaw;
+        if (sim_use_region_yaw_override_ && region_active_ && current_region_ == REGION_FLUCTUATE) {
+            desired_yaw = region_yaw_desired_;
+        }
+
+        const double yaw_error = normalizeAngle(desired_yaw - current_yaw);
+        const double max_wz = std::max(0.0, sim_max_wz_);
+        return std::clamp(sim_yaw_kp_ * yaw_error, -max_wz, max_wz);
+    }
+
+    void publishSimulatedTransformWithIdleSpin(const rclcpp::Time& now) {
+        if (shouldLockSimYawToFluctuateRegion()) {
+            alignSimYawToFluctuateRegion();
+            last_sim_vx_ = 0.0;
+            last_sim_vy_ = 0.0;
+            last_sim_wz_ = 0.0;
+            publishSimulatedTransform(now);
+            return;
+        }
+
+        if (!sim_spin_enabled_) {
+            publishSimulatedTransform(now);
+            return;
+        }
+
+        if (!has_last_idle_spin_time_) {
+            last_idle_spin_time_ = now;
+            has_last_idle_spin_time_ = true;
+            last_sim_wz_ = sim_spin_rate_;
+            publishSimulatedTransform(now);
+            return;
+        }
+
+        double dt = (now - last_idle_spin_time_).seconds();
+        last_idle_spin_time_ = now;
+        if (dt > 0.0) {
+            dt = std::min(dt, max_dt_);
+            simulator_.integrateWorldCommand({ 0.0, 0.0, sim_spin_rate_ }, dt);
+        }
+        last_sim_vx_ = 0.0;
+        last_sim_vy_ = 0.0;
+        last_sim_wz_ = sim_spin_rate_;
+        publishSimulatedTransform(now);
+    }
+
+    bool shouldLockSimYawToFluctuateRegion() const {
+        return sim_use_region_yaw_override_ && region_active_ && current_region_ == REGION_FLUCTUATE;
+    }
+
+    void alignSimYawToFluctuateRegion() {
+        if (!shouldLockSimYawToFluctuateRegion()) {
+            return;
+        }
+
+        const auto pose = simulator_.getPose();
+        simulator_.setPose(pose.x, pose.y, normalizeAngle(static_cast<double>(region_yaw_desired_)));
+    }
+
     void publishSimulatedTransform(const rclcpp::Time& now) {
         const auto s = simulator_.getPose();
         geometry_msgs::msg::TransformStamped tf_msg;
@@ -1075,6 +1215,20 @@ private:
         q.setRPY(0.0, 0.0, s.yaw);
         tf_msg.transform.rotation = tf2::toMsg(q);
         tf_broadcaster_->sendTransform(tf_msg);
+
+        if (sim_odom_pub_) {
+            nav_msgs::msg::Odometry odom;
+            odom.header.stamp = now;
+            odom.header.frame_id = sim_tf_parent_frame_;
+            odom.child_frame_id = base_frame_;
+            odom.pose.pose.position.x = s.x;
+            odom.pose.pose.position.y = s.y;
+            odom.pose.pose.orientation = tf_msg.transform.rotation;
+            odom.twist.twist.linear.x = last_sim_vx_;
+            odom.twist.twist.linear.y = last_sim_vy_;
+            odom.twist.twist.angular.z = last_sim_wz_;
+            sim_odom_pub_->publish(odom);
+        }
     }
 
     static double normalizeAngle(double angle) {
@@ -1087,7 +1241,10 @@ private:
 
     // ROS 接口
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr sim_odom_pub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr external_cmd_sub_;
+    rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr region_sub_;
+    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr region_yaw_sub_;
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_highfreq_sub_;
@@ -1104,6 +1261,8 @@ private:
     // 参数
     std::string map_frame_, base_frame_;
     std::string sim_tf_parent_frame_;
+    static constexpr uint8_t REGION_FLAT = 1;
+    static constexpr uint8_t REGION_FLUCTUATE = 5;
     double goal_tolerance_;
     double goal_decel_radius_;
     double goal_min_speed_ratio_;
@@ -1148,9 +1307,22 @@ private:
     bool simulate_ { false };
     bool sim_external_cmd_vel_ { false };
     double sim_cmd_vel_timeout_ { 0.3 };
+    double sim_velocity_gain_ { 1.0 };
+    bool sim_follow_target_yaw_ { true };
+    double sim_yaw_kp_ { 4.0 };
+    double sim_max_wz_ { 1.0 };
+    bool sim_spin_enabled_ { false };
+    double sim_spin_rate_ { 1.5 };
+    bool sim_use_region_yaw_override_ { true };
+    uint8_t current_region_ { REGION_FLAT };
+    float region_yaw_desired_ { 0.0f };
+    bool region_active_ { false };
     bool has_external_cmd_ { false };
     geometry_msgs::msg::Twist last_external_cmd_;
     rclcpp::Time last_external_cmd_stamp_;
+    bool has_last_idle_spin_time_ { false };
+    rclcpp::Time last_idle_spin_time_;
+    double last_sim_vx_ { 0.0 }, last_sim_vy_ { 0.0 }, last_sim_wz_ { 0.0 };
     gvc::Simulator2D simulator_ {};
 
     // Costmap and escape state

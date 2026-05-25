@@ -18,6 +18,7 @@ include_directories(
 
 add_library(${PROJECT_NAME} SHARED
   src/click_obstacles_layer.cpp
+  src/directional_forbidden_layer.cpp
   src/dynamic_scan_layer.cpp
 )
 

@@ -26,6 +26,7 @@ class NavigateToPoseAction(py_trees.behaviour.Behaviour):
 		timeout_s: Optional[float] = None,
 		cancel_on_terminate: bool = True,
 		retry_on_failure: bool = False,
+		publish_goal_topic: str = "",
 	):
 		super().__init__(name)
 		self.node = node
@@ -33,6 +34,7 @@ class NavigateToPoseAction(py_trees.behaviour.Behaviour):
 		self._goal_handle = None
 		self._result_future = None
 		self._sent = False
+		self._goal_rejected = False
 		self.timeout_s = timeout_s
 		self.cancel_on_terminate = cancel_on_terminate
 		self.retry_on_failure = retry_on_failure
@@ -42,6 +44,11 @@ class NavigateToPoseAction(py_trees.behaviour.Behaviour):
 		self._x = x
 		self._y = y
 		self._yaw = yaw
+		self._goal_pub = (
+			self.node.create_publisher(PoseStamped, publish_goal_topic, 10)
+			if publish_goal_topic
+			else None
+		)
 
 	def setup(self, **kwargs) -> None:
 		# kwargs may include timeout, node, visitor. Use timeout if provided; otherwise block briefly.
@@ -53,6 +60,7 @@ class NavigateToPoseAction(py_trees.behaviour.Behaviour):
 		self._sent = False
 		self._goal_handle = None
 		self._result_future = None
+		self._goal_rejected = False
 		self._start_time = self.node.get_clock().now()
 
 	def update(self) -> Status:
@@ -69,10 +77,19 @@ class NavigateToPoseAction(py_trees.behaviour.Behaviour):
 				goal_msg.pose = pose
 			else:
 				goal_msg.pose = self._goal_pose
+			if self._goal_pub is not None:
+				self._goal_pub.publish(goal_msg.pose)
+			self.node.get_logger().info(
+				f"{self.name}: sending NavigateToPose goal "
+				f"({goal_msg.pose.pose.position.x:.2f}, {goal_msg.pose.pose.position.y:.2f})"
+			)
 			send_future = self.client.send_goal_async(goal_msg)
 			send_future.add_done_callback(self._on_goal_response)
 			self._sent = True
 			return Status.RUNNING
+
+		if self._goal_rejected:
+			return Status.FAILURE
 
 		# timeout handling
 		if self.timeout_s is not None:
@@ -102,6 +119,7 @@ class NavigateToPoseAction(py_trees.behaviour.Behaviour):
 					self._goal_handle = None
 					self._result_future = None
 					self._start_time = self.node.get_clock().now()
+					self._goal_rejected = False
 					return Status.RUNNING
 				return Status.FAILURE
 
@@ -118,6 +136,7 @@ class NavigateToPoseAction(py_trees.behaviour.Behaviour):
 		self._goal_handle = future.result()
 		if not getattr(self._goal_handle, 'accepted', False):
 			self._result_future = None
+			self._goal_rejected = True
 			self.node.get_logger().warn(f"NavigateToPose goal rejected")
 		else:
 			self._result_future = self._goal_handle.get_result_async()
@@ -142,6 +161,7 @@ class NavigateThroughPosesAction(py_trees.behaviour.Behaviour):
 		self._result_future = None
 		self._sent = False
 		self._succeeded = False
+		self._goal_rejected = False
 		self.timeout_s = timeout_s
 		self.cancel_on_terminate = cancel_on_terminate
 		self._start_time = None
@@ -159,6 +179,7 @@ class NavigateThroughPosesAction(py_trees.behaviour.Behaviour):
 		self._sent = False
 		self._goal_handle = None
 		self._result_future = None
+		self._goal_rejected = False
 		self._start_time = self.node.get_clock().now()
 
 	def _build_pose_stamped(self, p: dict) -> PoseStamped:
@@ -186,6 +207,9 @@ class NavigateThroughPosesAction(py_trees.behaviour.Behaviour):
 				f"NavigateThroughPoses: sending {len(goal_msg.poses)} waypoints"
 			)
 			return Status.RUNNING
+
+		if self._goal_rejected:
+			return Status.FAILURE
 
 		if self.timeout_s is not None:
 			elapsed = (self.node.get_clock().now() - self._start_time).nanoseconds / 1e9
@@ -223,6 +247,7 @@ class NavigateThroughPosesAction(py_trees.behaviour.Behaviour):
 		self._goal_handle = future.result()
 		if not getattr(self._goal_handle, 'accepted', False):
 			self._result_future = None
+			self._goal_rejected = True
 			self.node.get_logger().warn("NavigateThroughPoses goal rejected")
 		else:
 			self._result_future = self._goal_handle.get_result_async()

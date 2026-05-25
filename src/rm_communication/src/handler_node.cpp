@@ -386,8 +386,11 @@ private:
         // 根据电控状态更新行为树参数
         updateBehaviorTreeParams(received_cmd);
 
-        // 发布导航目标点（使用电控下发的 target_x/target_y）
-        publishChasePoint(received_cmd);
+        if (received_cmd.eSentryState == sentry_state_e::attack
+            || received_cmd.eSentryState == sentry_state_e::pursuit) {
+            // 发布追击目标点（使用电控下发的 target_x/target_y）
+            publishChasePoint(received_cmd);
+        }
     }
 
     // 根据电控状态更新行为树参数
@@ -424,8 +427,34 @@ private:
         bool patrol_enabled = (cmd.eSentryState == sentry_state_e::patrol);
         bool standby_enabled = (cmd.eSentryState == sentry_state_e::standby);
         bool supply_enabled = (cmd.eSentryState == sentry_state_e::supply);
+        bool go_attack_outpost_enabled = (cmd.eSentryState == sentry_state_e::go_attack_outpost);
+        bool rush_base_enabled = (cmd.eSentryState == sentry_state_e::rush_base);
+        bool hit_energy_buff_enabled = (cmd.eSentryState == sentry_state_e::hit_energy_buff);
         bool occupy_point_enabled = (cmd.eSentryState == sentry_state_e::occupy_point);
         bool repel_enabled = (cmd.eSentryState == sentry_state_e::repel);
+
+        if (cmd.eSentryState != last_bt_param_state_) {
+            last_bt_param_state_ = cmd.eSentryState;
+            const auto state_it = state_map.find(cmd.eSentryState);
+            const std::string state_name =
+                state_it == state_map.end() ? "unknown" : state_it->second;
+            RCLCPP_INFO(
+                this->get_logger(),
+                "BT state update: state=%u(%s), chase=%s, patrol=%s, standby=%s, supply=%s, "
+                "go_attack_outpost=%s, rush_base=%s, hit_energy_buff=%s, occupy_point=%s, repel=%s",
+                cmd.eSentryState,
+                state_name.c_str(),
+                chase_enabled ? "true" : "false",
+                patrol_enabled ? "true" : "false",
+                standby_enabled ? "true" : "false",
+                supply_enabled ? "true" : "false",
+                go_attack_outpost_enabled ? "true" : "false",
+                rush_base_enabled ? "true" : "false",
+                hit_energy_buff_enabled ? "true" : "false",
+                occupy_point_enabled ? "true" : "false",
+                repel_enabled ? "true" : "false"
+            );
+        }
 
         // 设置行为树参数
         std::vector<rclcpp::Parameter> params = {
@@ -433,8 +462,12 @@ private:
             rclcpp::Parameter("patrol", patrol_enabled),
             rclcpp::Parameter("standby", standby_enabled),
             rclcpp::Parameter("supply", supply_enabled),
+            rclcpp::Parameter("go_attack_outpost", go_attack_outpost_enabled),
+            rclcpp::Parameter("rush_base", rush_base_enabled),
+            rclcpp::Parameter("hit_energy_buff", hit_energy_buff_enabled),
             rclcpp::Parameter("occupy_point", occupy_point_enabled),
             rclcpp::Parameter("repel", repel_enabled),
+            rclcpp::Parameter("patrol_region", static_cast<int>(cmd.patrol_region)),
             rclcpp::Parameter("hp", static_cast<double>(cmd.hp_remain)),
             rclcpp::Parameter("ammo", static_cast<double>(cmd.bullet_remain)),
         };
@@ -445,16 +478,20 @@ private:
                 this->get_logger(),
                 *this->get_clock(),
                 1000,
-                "Set BT params: chase=%s, patrol=%s, standby=%s, supply=%s, occupy_point=%s, repel=%s, hp=%u, ammo=%u, state=%d, region=%d",
+                "Set BT params: chase=%s, patrol=%s, standby=%s, supply=%s, go_attack_outpost=%s, rush_base=%s, hit_energy_buff=%s, occupy_point=%s, repel=%s, hp=%u, ammo=%u, state=%d, patrol_region=%u, terrain_region=%d",
                 chase_enabled ? "true" : "false",
                 patrol_enabled ? "true" : "false",
                 standby_enabled ? "true" : "false",
                 supply_enabled ? "true" : "false",
+                go_attack_outpost_enabled ? "true" : "false",
+                rush_base_enabled ? "true" : "false",
+                hit_energy_buff_enabled ? "true" : "false",
                 occupy_point_enabled ? "true" : "false",
                 repel_enabled ? "true" : "false",
                 cmd.hp_remain,
                 cmd.bullet_remain,
                 static_cast<int>(cmd.eSentryState),
+                static_cast<unsigned int>(cmd.patrol_region),
                 current_region_
             );
         } catch (const std::exception& e) {
@@ -728,6 +765,7 @@ private:
     // 数据
     navInfo_t nav_info_ {};
     navCommand_t last_cmd_ {};
+    uint8_t last_bt_param_state_ { 255 };
 
     // 追击相关参数
     double chase_min_distance_ { 0.25 };

@@ -22,12 +22,14 @@ global_velocity_controller:
     max_vy: 0.6
     max_wz: 1.0  # 提高到5.0，不限制陀螺角速度
 
+    goal_tolerance: 0.04          # 必须小于等于 Nav2 xy_goal_tolerance(0.05)，避免提前锁零速
+
     anti_windup_integral_limit_xy: 0.5
     anti_windup_integral_limit_yaw: 0.5
 
     # Goal approach: deceleration zone to prevent overshoot on omni wheels
-    goal_decel_radius: 0.8        # 距终点此距离开始线性减速(m)（留足余量）
-    goal_min_speed_ratio: 0.12    # 减速区最低速度比例 (0~1)
+    goal_decel_radius: 0.5        # 距终点此距离开始线性减速(m)，过大会在终点前过早降速
+    goal_min_speed_ratio: 0.20    # 减速区最低速度比例 (0~1)，保留足够爬行速度进容差
     goal_lock_duration: 1.0       # 到达后锁定零速持续时间(s)，防止PID反弹振荡
 
     # 高频里程计位置预测（补偿 Odin1 TF 仅10Hz的延迟）
@@ -37,7 +39,7 @@ global_velocity_controller:
     # Anti-oscillation / deadbands
     velocity_deadband: 0.02
     yaw_deadband: 0.02
-    stop_speed_threshold: 0.04
+    stop_speed_threshold: 0.005
     stop_angular_threshold: 0.03
 
     # Command rate limiting (non-symmetric: decel > accel to counter omni wheel roller slip)

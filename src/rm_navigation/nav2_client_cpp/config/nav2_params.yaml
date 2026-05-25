@@ -169,7 +169,16 @@ global_costmap:
       robot_radius: 0.25  # 机器人半径(m) = 39cm
       resolution: 0.01  # 地图分辨率(m/pixel)
       track_unknown_space: true  # 跟踪未知空间
-      plugins: ["static_layer", "dynamic_scan_layer", "click_obstacles_layer", "inflation_layer"]  # 使用的层插件
+      plugins: ["static_layer", "directional_forbidden_layer", "dynamic_scan_layer", "click_obstacles_layer", "inflation_layer"]  # 使用的层插件
+      directional_forbidden_layer:
+        plugin: "click_obstacles_layer::DirectionalForbiddenLayer"
+        enabled: True
+        goal_topic: "/goal_pose"
+        plan_topic: "/plan"
+        min_region_delta_y: 0.10
+        # 只限制坡度较大的 fluctuate1/3：当 /plan 在区域内部沿路径顺序 |y| 增大时视为障碍。
+        fluctuate_region_1: [5.05, 4.6, 4.25, 4.6, 4.25, 6.2, 5.05, 6.2]
+        fluctuate_region_3: [-5.05, -4.6, -4.25, -4.6, -4.25, -6.2, -5.05, -6.2]
       dynamic_scan_layer:
         plugin: "click_obstacles_layer::DynamicScanLayer"
         enabled: True
@@ -264,7 +273,7 @@ map_saver:
 # ============ 路径规划器配置 ============
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 20.0  # 期望规划频率(Hz)
+    expected_planner_frequency: 5.0  # 期望规划频率(Hz)，长距离 Smac 规划不应按控制频率要求
     use_sim_time: False
     planner_plugins: ["GridBased"]  # 使用的规划器插件
     GridBased:
@@ -273,8 +282,10 @@ planner_server:
       # plugin: "nav2_theta_star_planner/ThetaStarPlanner"  # Theta*
       tolerance: 0.2  # 目标容差(m)
       allow_unknown: true  # 允许规划穿过未知区域
-      downsample_costmap: false  # 是否下采样代价地图（大地图时可启用）
-      downsampling_factor: 2  # 下采样倍率（例如5cm→10cm）
+      downsample_costmap: true  # 1cm全局地图长距离搜索量过大，规划时下采样
+      downsampling_factor: 2  # 规划分辨率约2cm，保留窄通道能力同时降低搜索节点数
+      max_iterations: 2000000  # 长距离/多狭窄区域路径需要显式提高搜索上限
+      max_on_approach_iterations: 2000  # 接近目标容差区域后的额外搜索次数
       cost_travel_multiplier: 10.0  # 代价地图行进代价乘数，越大越倾向绕开膨胀区
       use_final_approach_orientation: true  # 使用最终接近方向
       # --- 路径平滑器 ---
