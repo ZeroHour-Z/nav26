@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=XJTU Nav26
+Comment=Start XJTU Nav26 ROS launch screen session
+Exec=/home/xjturm/xjtu_nav26/script/nav_autostart.sh
+Path=/home/xjturm/xjtu_nav26
+Terminal=false
+X-GNOME-Autostart-enabled=true

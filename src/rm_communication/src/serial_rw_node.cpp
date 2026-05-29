@@ -58,9 +58,9 @@ constexpr uint8_t kNavTailTx = 0x4D; // navInfo_t 帧尾   （PC   -> 电控）
 constexpr uint8_t kAimHeader = 0x71;
 constexpr uint8_t kAimTail = 0x4C;
 // aim 两种 union 视图的 tail 位置不同：
-// MessData_AutoAim tail 在 byte[54]，MessData_WM tail 在 byte[60]。
+// MessData_AutoAim tail 在 byte[54]，MessData_WM tail 在 byte[63]。
 constexpr size_t kAimAutoTailOffset = 54;
-constexpr size_t kAimWmTailOffset = 60;
+constexpr size_t kAimWmTailOffset = 63;
 
 static_assert(sizeof(navCommand_t) == kFrameSize, "navCommand_t must be 64 bytes");
 static_assert(sizeof(navInfo_t) == kFrameSize, "navInfo_t must be 64 bytes");
@@ -176,7 +176,7 @@ private:
                 this->get_logger(),
                 *this->get_clock(),
                 2000,
-                "[aim] tx_packet bad framing head=0x%02X tail@54=0x%02X tail@60=0x%02X, drop",
+                "[aim] tx_packet bad framing head=0x%02X tail@54=0x%02X tail@63=0x%02X, drop",
                 (unsigned)msg->data.front(),
                 (unsigned)msg->data[kAimAutoTailOffset],
                 (unsigned)msg->data[kAimWmTailOffset]
@@ -187,7 +187,7 @@ private:
             this->get_logger(),
             *this->get_clock(),
             1000,
-            "[aim] TX accepted, writing 64B to serial tail@54=0x%02X tail@60=0x%02X",
+            "[aim] TX accepted, writing 64B to serial tail@54=0x%02X tail@63=0x%02X",
             (unsigned)msg->data[kAimAutoTailOffset],
             (unsigned)msg->data[kAimWmTailOffset]
         );
@@ -307,7 +307,7 @@ private:
             if (header == kNavHeader && rx_buffer_[kFrameSize - 1] == kNavTailRx) {
                 ok = true;
             } else if (header == kAimHeader) {
-                // 兼容性：aim 两种结构 tail 分别在 byte[54]/byte[60]；
+                // 兼容性：aim 两种结构 tail 分别在 byte[54]/byte[63]；
                 // 若电控未填 tail，则用
                 // "下一字节是另一个合法帧头(0x71/0x72)" 作为 64B 边界校验。
                 // 这样既能恢复链路，又能在帧间错位时拒收以重同步。
@@ -320,7 +320,7 @@ private:
                         ok = true;
                         RCLCPP_WARN_ONCE(
                             this->get_logger(),
-                            "[aim] tail byte[54]=0x%02X byte[60]=0x%02X != 0x4C; accepting based on "
+                            "[aim] tail byte[54]=0x%02X byte[63]=0x%02X != 0x4C; accepting based on "
                             "64B alignment (next head=0x%02X). MCU should write "
                             "frame tail for stricter validation.",
                             (unsigned)rx_buffer_[kAimAutoTailOffset],
@@ -350,9 +350,10 @@ private:
                     this->get_logger(),
                     *this->get_clock(),
                     1000,
-                    "[nav] RX Color:%d State:%d HP:%d Bullet:%d Enemy:(%.2f,%.2f) Target:(%.2f,%.2f)",
+                    "[nav] RX Color:%d State:%d Region:%d HP:%d Bullet:%d Enemy:(%.2f,%.2f) Target:(%.2f,%.2f)",
                     (int)n_data.color,
                     (int)n_data.eSentryState,
+                    (int)n_data.patrol_region,
                     (int)n_data.hp_remain,
                     (int)n_data.bullet_remain,
                     n_data.enemy_x,

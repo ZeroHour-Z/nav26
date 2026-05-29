@@ -100,7 +100,7 @@ class ChaseDynamicPointAction(py_trees.behaviour.Behaviour):
 		return Status.RUNNING
 
 	def terminate(self, new_status: Status) -> None:
-		if new_status == Status.INVALID and self.cancel_on_terminate and self._goal_handle is not None:
+		if new_status != Status.RUNNING and self.cancel_on_terminate and self._goal_handle is not None:
 			try:
 				self._goal_handle.cancel_goal_async()
 			except Exception as exc:

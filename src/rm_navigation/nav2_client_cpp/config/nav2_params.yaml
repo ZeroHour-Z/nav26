@@ -72,12 +72,12 @@ controller_server:
       stateful: True  # 保持状态
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.05  # XY平面位置容差(m) - 放宽以适应陀螺
-      yaw_goal_tolerance: 0.5  # 航向角容差(rad) - 放宽角度要求
+      yaw_goal_tolerance: 6.283185307  # 小陀螺持续旋转，目标到达只看XY，不要求最终朝向
 
     # === Regulated Pure Pursuit 路径跟踪控制器 ===
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.35  # 期望线速度(m/s) - 留出制动距离，避免冲进障碍物膨胀层
+      desired_linear_vel: 0.45  # 期望线速度(m/s) - 留出制动距离，避免冲进障碍物膨胀层
       lookahead_dist: 0.5  # 前瞻距离(m) - 减小以避免急弯内切
       min_lookahead_dist: 0.3  # 最小前瞻距离(m)
       max_lookahead_dist: 0.9  # 最大前瞻距离(m)
@@ -248,7 +248,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0  # 代价衰减因子(值越大衰减越快)
-        inflation_radius: 0.7  # 膨胀半径(m) - 障碍物周围的安全距离
+        inflation_radius: 0.65  # 膨胀半径(m) - 障碍物周围的安全距离
       always_send_full_costmap: False
   global_costmap_client:
     ros__parameters:

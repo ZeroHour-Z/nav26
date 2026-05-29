@@ -62,6 +62,13 @@ tree:
                   param: "chase"
                   expected: true
                   latched_ok: false
+          - type: TopicBoolCondition
+            name: 追击路径未穿过颠簸区?
+            params:
+              topic: "/path_through_fluctuate_region"
+              expected: false
+              latched_ok: false
+              default_value: false
 
           # 标记进入追击状态
           - type: SetBlackboard
@@ -99,6 +106,13 @@ tree:
                 params:
                   param: "chase"
                   expected: false
+              - type: TopicBoolCondition
+                name: 等待路径穿过颠簸区
+                params:
+                  topic: "/path_through_fluctuate_region"
+                  expected: true
+                  latched_ok: false
+                  default_value: false
 
           # 清除追击标记
           - type: SetBlackboard

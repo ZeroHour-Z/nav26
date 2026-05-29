@@ -49,6 +49,13 @@ tree:
                   param: "chase"
                   expected: true
                   latched_ok: false
+          - type: TopicBoolCondition
+            name: 追击路径未穿过颠簸区?
+            params:
+              topic: "/path_through_fluctuate_region"
+              expected: false
+              latched_ok: false
+              default_value: false
           - type: SetBlackboard
             name: 设置追击标记
             params:
@@ -78,6 +85,13 @@ tree:
                 params:
                   param: "chase"
                   expected: false
+              - type: TopicBoolCondition
+                name: 等待路径穿过颠簸区
+                params:
+                  topic: "/path_through_fluctuate_region"
+                  expected: true
+                  latched_ok: false
+                  default_value: false
           - type: SetBlackboard
             name: 清除追击标记
             params:
@@ -114,6 +128,35 @@ tree:
               frame_id: "map"
               x: 11.0
               y: 5.0
+              yaw: 0.0
+              timeout_s: 60
+              retry_on_failure: true
+              publish_goal_topic: "/goal_pose"
+
+      - type: Sequence
+        name: constrained_defense_约束防守
+        params:
+          memory: false
+        children:
+          - type: ParamBoolCondition
+            name: constrained_defense状态?
+            params:
+              param: "constrained_defense"
+              expected: true
+              latched_ok: false
+          - type: PublishString
+            name: 发布constrained_defense
+            params:
+              topic: "/sentry_actions"
+              data: "CONSTRAINED_DEFENSE"
+              publish_every_tick: false
+          - type: NavigateToPoseAction
+            name: 去约束防守点
+            params:
+              server_name: "navigate_to_pose"
+              frame_id: "map"
+              x: 9.0
+              y: -1.0
               yaw: 0.0
               timeout_s: 60
               retry_on_failure: true
@@ -230,8 +273,13 @@ tree:
               frame_id: "map"
               region_param: "patrol_region"
               default_region: 1
-              dwell_s: 2.0
+              dwell_s: 10.0
               timeout_s: 60 
+              max_retries_per_waypoint: 5
+              retry_delay_s: 2.0
+              advance_on_failure: false
+              arrival_tolerance_m: 0.25
+              base_frame: "base_link"
               publish_goal_topic: "/goal_pose"
               regions:
                 0:
@@ -239,7 +287,7 @@ tree:
                   # - {x: 2.5, y: -2.0, yaw: 0.0}
                 1:
                   - {x: 3.4, y: -5.6, yaw: 0.0}
-                  # - {x: 6.0, y: -1.0, yaw: 0.0}
+                  - {x: 9.0, y: -1.0, yaw: 0.0}
                   - {x: 9.5, y: 4.5, yaw: 0.0}
                 2:
                   # - {x: -1.4, y: -4.6, yaw: 0.0}
@@ -255,7 +303,7 @@ tree:
                   - {x: -1.0, y: -4.0, yaw: 0.0}
                   - {x: 1.0, y: -4.0, yaw: 0.0}
                 7:
-                  # - {x: -0.6, y: -5.0, yaw: 0.0}
+                  - {x: 2.1, y: 3.9, yaw: 0.0}
                 8:
                   - {x: -13.0, y: 0.0, yaw: 0.0}
 

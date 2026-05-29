@@ -23,7 +23,7 @@ constexpr size_t kFrameSize = 64;
 constexpr uint8_t kAimHeader = 0x71;
 constexpr uint8_t kAimTail = 0x4C;
 constexpr size_t kAimAutoTailOffset = 54;
-constexpr size_t kAimWmTailOffset = 60;
+constexpr size_t kAimWmTailOffset = 63;
 
 static sockaddr_in makeAddr(const std::string& host, int port) {
     sockaddr_in addr {};
@@ -155,7 +155,7 @@ private:
                     this->get_logger(),
                     *this->get_clock(),
                     2000,
-                    "aim UDP packet bad framing head=0x%02X tail@54=0x%02X tail@60=0x%02X, drop",
+                    "aim UDP packet bad framing head=0x%02X tail@54=0x%02X tail@63=0x%02X, drop",
                     (unsigned)msg.data.front(),
                     (unsigned)msg.data[kAimAutoTailOffset],
                     (unsigned)msg.data[kAimWmTailOffset]
@@ -168,7 +168,7 @@ private:
                 this->get_logger(),
                 *this->get_clock(),
                 1000,
-                "aim UDP -> /rm_comm/aim_tx_packet head=0x%02X tail@54=0x%02X tail@60=0x%02X",
+                "aim UDP -> /rm_comm/aim_tx_packet head=0x%02X tail@54=0x%02X tail@63=0x%02X",
                 (unsigned)msg.data.front(),
                 (unsigned)msg.data[kAimAutoTailOffset],
                 (unsigned)msg.data[kAimWmTailOffset]

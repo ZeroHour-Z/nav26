@@ -30,6 +30,7 @@ const std::unordered_map<std::string, uint8_t> kStateNameToValue = {
     { "patrol", sentry_state_e::patrol },
     { "stationary_defense", sentry_state_e::stationary_defense },
     { "constrained_defense", sentry_state_e::constrained_defense },
+    { "constrained_defence", sentry_state_e::constrained_defense },
     { "error", sentry_state_e::error },
     { "logic", sentry_state_e::logic },
     { "pursuit", sentry_state_e::pursuit },

@@ -20,7 +20,8 @@ class BTNode(Node):
 	def __init__(self):
 		# Allow undeclared parameters so that external clients (e.g. the
 		# rm_communication handler_node) can set BT control parameters
-		# (chase / patrol / standby / supply / go_attack_outpost / rush_base / hit_energy_buff / occupy_point / repel / hp / ammo
+		# (chase / patrol / standby / supply / constrained_defense /
+		# go_attack_outpost / rush_base / hit_energy_buff / occupy_point / repel / hp / ammo
 		# and any condition/action specific keys) without requiring this node
 		# to have declared every one of them in advance. This eliminates the
 		# rclpy "Invalid access to undeclared parameter(s)" warning when the
@@ -44,7 +45,19 @@ class BTNode(Node):
 		# Pre-declare the BT control parameters that the communication node
 		# pushes every cycle so that initial set_parameters calls succeed and
 		# downstream conditions can read them immediately.
-		for bool_name in ('chase', 'patrol', 'standby', 'supply', 'go_attack_outpost', 'rush_base', 'hit_energy_buff', 'occupy_point', 'repel'):
+		for bool_name in (
+			'chase',
+			'patrol',
+			'standby',
+			'supply',
+			'constrained_defense',
+			'constrained_defence',
+			'go_attack_outpost',
+			'rush_base',
+			'hit_energy_buff',
+			'occupy_point',
+			'repel',
+		):
 			if not self.has_parameter(bool_name):
 				self.declare_parameter(bool_name, False)
 		if not self.has_parameter('patrol_region'):

@@ -18,8 +18,8 @@ global_velocity_controller:
     kd_yaw: 0.0
 
     # Limits
-    max_vx: 0.6
-    max_vy: 0.6
+    max_vx: 0.8
+    max_vy: 0.8
     max_wz: 1.0  # 提高到5.0，不限制陀螺角速度
 
     goal_tolerance: 0.04          # 必须小于等于 Nav2 xy_goal_tolerance(0.05)，避免提前锁零速

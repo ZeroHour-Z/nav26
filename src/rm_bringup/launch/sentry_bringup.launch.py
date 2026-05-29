@@ -28,6 +28,17 @@ def _patch_yaml_dict(data: dict, key: str, value) -> dict:
     return not existed
 
 
+def _sanitize_ros_params(value):
+    """Convert YAML nulls before passing vendor config through ROS parameters."""
+    if value is None:
+        return 0
+    if isinstance(value, dict):
+        return {key: _sanitize_ros_params(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_ros_params(item) for item in value]
+    return value
+
+
 def _launch_odin_with_config(context):
     """Patch Odin config for this launch, then launch odin_ros_driver.
 
@@ -36,6 +47,8 @@ def _launch_odin_with_config(context):
     and restore the config file when the launch shuts down.
     """
     if LaunchConfiguration('sim').perform(context).lower() == 'true':
+        return []
+    if LaunchConfiguration('driver').perform(context).lower() != 'true':
         return []
     lidar = LaunchConfiguration('lidar').perform(context)
     if lidar != 'odin1':
@@ -165,7 +178,7 @@ def _launch_odin_with_config(context):
     # pcd2depth node (reads original config — custom_map_mode irrelevant to it)
     pcd2depth_config_path = os.path.join(odin_pkg, 'config', 'control_command.yaml')
     with open(pcd2depth_config_path, 'r') as f:
-        pcd2depth_params = yaml.safe_load(f)
+        pcd2depth_params = _sanitize_ros_params(yaml.safe_load(f))
     pcd2depth_calib_path = os.path.join(odin_pkg, 'config', 'calib.yaml')
     pcd2depth_params['calib_file_path'] = pcd2depth_calib_path
     actions.append(Node(
@@ -180,7 +193,7 @@ def _launch_odin_with_config(context):
     # cloud reprojection node
     reprojection_config_path = os.path.join(odin_pkg, 'config', 'control_command.yaml')
     with open(reprojection_config_path, 'r') as f:
-        reprojection_params = yaml.safe_load(f)
+        reprojection_params = _sanitize_ros_params(yaml.safe_load(f))
     reprojection_calib_path = os.path.join(odin_pkg, 'config', 'calib.yaml')
     reprojection_params['calib_file_path'] = reprojection_calib_path
     actions.append(Node(
@@ -195,7 +208,7 @@ def _launch_odin_with_config(context):
     # image overlay node
     overlay_config_path = os.path.join(odin_pkg, 'config', 'control_command.yaml')
     with open(overlay_config_path, 'r') as f:
-        overlay_params = yaml.safe_load(f)
+        overlay_params = _sanitize_ros_params(yaml.safe_load(f))
     actions.append(Node(
         package='odin_ros_driver',
         executable='image_overlay_node',
@@ -229,12 +242,12 @@ def generate_launch_description():
 
     sim_arg = DeclareLaunchArgument(
         'sim',
-        default_value='true',
+        default_value='false',
         description='仿真模式: 为 true 时跳过驱动/定位/点云地形分析，使用 GVC 仿真器发布 TF/odom'
     )
     sim_control_panel_arg = DeclareLaunchArgument(
         'sim_control_panel',
-        default_value='true',
+        default_value='false',
         description='仿真模式下是否启动电控 GUI 面板'
     )
 
@@ -264,7 +277,8 @@ def generate_launch_description():
 
     initial_x_arg = DeclareLaunchArgument(
         'initial_x',
-        default_value='10.0',
+        default_value='10.4365',
+        # default_value='1.9',
         description='初始 X 位置(map坐标系)'
     )
     initial_y_arg = DeclareLaunchArgument(

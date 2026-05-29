@@ -427,6 +427,8 @@ private:
         bool patrol_enabled = (cmd.eSentryState == sentry_state_e::patrol);
         bool standby_enabled = (cmd.eSentryState == sentry_state_e::standby);
         bool supply_enabled = (cmd.eSentryState == sentry_state_e::supply);
+        bool constrained_defense_enabled =
+            (cmd.eSentryState == sentry_state_e::constrained_defense);
         bool go_attack_outpost_enabled = (cmd.eSentryState == sentry_state_e::go_attack_outpost);
         bool rush_base_enabled = (cmd.eSentryState == sentry_state_e::rush_base);
         bool hit_energy_buff_enabled = (cmd.eSentryState == sentry_state_e::hit_energy_buff);
@@ -441,13 +443,15 @@ private:
             RCLCPP_INFO(
                 this->get_logger(),
                 "BT state update: state=%u(%s), chase=%s, patrol=%s, standby=%s, supply=%s, "
-                "go_attack_outpost=%s, rush_base=%s, hit_energy_buff=%s, occupy_point=%s, repel=%s",
+                "constrained_defense=%s, go_attack_outpost=%s, rush_base=%s, "
+                "hit_energy_buff=%s, occupy_point=%s, repel=%s",
                 cmd.eSentryState,
                 state_name.c_str(),
                 chase_enabled ? "true" : "false",
                 patrol_enabled ? "true" : "false",
                 standby_enabled ? "true" : "false",
                 supply_enabled ? "true" : "false",
+                constrained_defense_enabled ? "true" : "false",
                 go_attack_outpost_enabled ? "true" : "false",
                 rush_base_enabled ? "true" : "false",
                 hit_energy_buff_enabled ? "true" : "false",
@@ -462,6 +466,8 @@ private:
             rclcpp::Parameter("patrol", patrol_enabled),
             rclcpp::Parameter("standby", standby_enabled),
             rclcpp::Parameter("supply", supply_enabled),
+            rclcpp::Parameter("constrained_defense", constrained_defense_enabled),
+            rclcpp::Parameter("constrained_defence", constrained_defense_enabled),
             rclcpp::Parameter("go_attack_outpost", go_attack_outpost_enabled),
             rclcpp::Parameter("rush_base", rush_base_enabled),
             rclcpp::Parameter("hit_energy_buff", hit_energy_buff_enabled),
@@ -478,11 +484,15 @@ private:
                 this->get_logger(),
                 *this->get_clock(),
                 1000,
-                "Set BT params: chase=%s, patrol=%s, standby=%s, supply=%s, go_attack_outpost=%s, rush_base=%s, hit_energy_buff=%s, occupy_point=%s, repel=%s, hp=%u, ammo=%u, state=%d, patrol_region=%u, terrain_region=%d",
+                "Set BT params: chase=%s, patrol=%s, standby=%s, supply=%s, "
+                "constrained_defense=%s, go_attack_outpost=%s, rush_base=%s, "
+                "hit_energy_buff=%s, occupy_point=%s, repel=%s, hp=%u, ammo=%u, "
+                "state=%d, patrol_region=%u, terrain_region=%d",
                 chase_enabled ? "true" : "false",
                 patrol_enabled ? "true" : "false",
                 standby_enabled ? "true" : "false",
                 supply_enabled ? "true" : "false",
+                constrained_defense_enabled ? "true" : "false",
                 go_attack_outpost_enabled ? "true" : "false",
                 rush_base_enabled ? "true" : "false",
                 hit_energy_buff_enabled ? "true" : "false",

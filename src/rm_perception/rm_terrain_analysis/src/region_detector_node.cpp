@@ -12,6 +12,7 @@
 #include <geometry_msgs/msg/point.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <std_msgs/msg/u_int8_multi_array.hpp>
@@ -96,6 +97,8 @@ public:
         // 发布器
         region_pub_ = this->create_publisher<std_msgs::msg::UInt8>("/region_type", 10);
         yaw_pub_ = this->create_publisher<std_msgs::msg::Float32>("/region_yaw_desired", 10);
+        path_through_fluctuate_pub_ =
+            this->create_publisher<std_msgs::msg::Bool>("/path_through_fluctuate_region", 10);
         target_region_pub_ = this->create_publisher<std_msgs::msg::UInt8>("/target_region", 10);
         self_region_pub_ = this->create_publisher<std_msgs::msg::UInt8>("/self_region", 10);
         marker_pub_ =
@@ -363,6 +366,7 @@ private:
 
         // 检查路径经过哪些区域
         path_regions_.clear();
+        path_through_fluctuate_region_ = false;
         for (size_t i = 0; i < regions_.size(); ++i) {
             for (const auto& pose: msg->poses) {
                 if (isPointInPolygon(
@@ -372,10 +376,15 @@ private:
                     ))
                 {
                     path_regions_.insert(i);
+                    if (regions_[i].type == REGION_FLUCTUATE) {
+                        path_through_fluctuate_region_ = true;
+                    }
                     break;
                 }
             }
         }
+
+        publishPathThroughFluctuate();
 
         if (!path_regions_.empty()) {
             RCLCPP_INFO_THROTTLE(
@@ -386,6 +395,12 @@ private:
                 path_regions_.size()
             );
         }
+    }
+
+    void publishPathThroughFluctuate() {
+        std_msgs::msg::Bool msg;
+        msg.data = path_through_fluctuate_region_;
+        path_through_fluctuate_pub_->publish(msg);
     }
 
     void onRxPacket(const std_msgs::msg::UInt8MultiArray::SharedPtr msg) {
@@ -551,6 +566,7 @@ private:
         std_msgs::msg::Float32 yaw_msg;
         yaw_msg.data = static_cast<float>(yaw_desired);
         yaw_pub_->publish(yaw_msg);
+        publishPathThroughFluctuate();
 
         if (has_enemy_pose_) {
             double enemy_map_x = 0.0;
@@ -860,6 +876,7 @@ private:
 
     rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr region_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr yaw_pub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr path_through_fluctuate_pub_;
     rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr target_region_pub_;
     rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr self_region_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
@@ -874,6 +891,7 @@ private:
     nav_msgs::msg::Path last_path_;
     bool has_path_ { false };
     std::set<size_t> path_regions_; // 路径经过的区域索引
+    bool path_through_fluctuate_region_ { false };
 
     std::vector<std::pair<double, double>> self_base_polygon_;
     std::vector<std::pair<double, double>> central_polygon_;

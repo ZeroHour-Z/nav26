@@ -8,7 +8,7 @@ register_keys:
   - 0.0
   - 0.0
   - 1.0
-  custom_map_mode: 2
+  custom_map_mode: 0
   devstatuslog: 1
   dtof_fps: 100
   enable_imu_smooth: 0
