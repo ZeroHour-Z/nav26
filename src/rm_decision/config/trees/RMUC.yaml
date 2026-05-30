@@ -273,7 +273,7 @@ tree:
               frame_id: "map"
               region_param: "patrol_region"
               default_region: 1
-              dwell_s: 10.0
+              dwell_s: 5.0
               timeout_s: 60 
               max_retries_per_waypoint: 5
               retry_delay_s: 2.0
@@ -283,12 +283,13 @@ tree:
               publish_goal_topic: "/goal_pose"
               regions:
                 0:
-                  - {x: -4.0, y: 3.0, yaw: 0.0}
+                  - {x: -5.5, y: 2.0, yaw: 0.0}
+                  - {x: -5.6, y: -2.2, yaw: 0.0}
                   # - {x: 2.5, y: -2.0, yaw: 0.0}
                 1:
                   - {x: 3.4, y: -5.6, yaw: 0.0}
                   - {x: 9.0, y: -1.0, yaw: 0.0}
-                  - {x: 9.5, y: 4.5, yaw: 0.0}
+                  # - {x: 9.5, y: 4.5, yaw: 0.0}
                 2:
                   # - {x: -1.4, y: -4.6, yaw: 0.0}
                 3:
@@ -301,6 +302,7 @@ tree:
                   # - {x: 2.2, y: -1.6, yaw: 0.0}
                 6:
                   - {x: -1.0, y: -4.0, yaw: 0.0}
+                  - {x: -1.7, y: -2.5, yaw: 0.0}
                   - {x: 1.0, y: -4.0, yaw: 0.0}
                 7:
                   - {x: 2.1, y: 3.9, yaw: 0.0}
