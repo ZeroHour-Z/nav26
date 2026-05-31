@@ -23,7 +23,7 @@ register_keys:
   pubintensitygray: 0
   recorddata: 0
   relocalization_map_abs_path: /home/xjturm/xjtu_nav26/src/odin_ros_driver/map/20260521_223913/map_20260521_224044.bin
-  resetalgo: 0
+  resetalgo: 1
   save_log: 0
   send_odom_baselink_tf: 1
   sendcloudrender: 1
@@ -42,4 +42,4 @@ register_keys:
   showpath: 0
   streamctrl: 1
   strict_usb3.0_check: 0
-  use_host_ros_time: 1
+  use_host_ros_time: 0
