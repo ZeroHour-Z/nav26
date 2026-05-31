@@ -14,7 +14,7 @@ def generate_launch_description():
 		'tree', default_value=default_tree,
 		description='Path to BT YAML file'
 	)
-	tick_hz_arg = DeclareLaunchArgument('tick_hz', default_value='10.0')
+	tick_hz_arg = DeclareLaunchArgument('tick_hz', default_value='5.0')
 	use_web_arg = DeclareLaunchArgument('use_web_viewer', default_value='true')
 	text_arg = DeclareLaunchArgument('enable_text_output', default_value='true')
 	text_every_arg = DeclareLaunchArgument('text_output_every_n', default_value='1')

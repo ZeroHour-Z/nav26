@@ -10,6 +10,7 @@
  */
 
 #include <geometry_msgs/msg/point.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
@@ -65,6 +66,9 @@ public:
         // 声明参数
         this->declare_parameter<double>("lookahead_distance", 0.5);
         this->declare_parameter<double>("publish_rate", 20.0);
+        this->declare_parameter<std::string>("plan_topic", "/plan");
+        this->declare_parameter<std::string>("chase_goal_topic", "/chase_goal_pose");
+        this->declare_parameter<double>("chase_plan_goal_tolerance", 0.75);
 
         // 颠簸区域参数（可以定义多个区域）
         // 格式：[x1, y1, x2, y2, x3, y3, ...]
@@ -99,17 +103,31 @@ public:
         yaw_pub_ = this->create_publisher<std_msgs::msg::Float32>("/region_yaw_desired", 10);
         path_through_fluctuate_pub_ =
             this->create_publisher<std_msgs::msg::Bool>("/path_through_fluctuate_region", 10);
+        chase_path_through_fluctuate_pub_ =
+            this->create_publisher<std_msgs::msg::Bool>("/chase_path_through_fluctuate_region", 10);
         target_region_pub_ = this->create_publisher<std_msgs::msg::UInt8>("/target_region", 10);
         self_region_pub_ = this->create_publisher<std_msgs::msg::UInt8>("/self_region", 10);
         marker_pub_ =
             this->create_publisher<visualization_msgs::msg::MarkerArray>("/region_markers", 10);
 
         // 订阅路径与通信包
+        this->get_parameter("plan_topic", plan_topic_);
+        this->get_parameter("chase_goal_topic", chase_goal_topic_);
+        this->get_parameter("chase_plan_goal_tolerance", chase_plan_goal_tolerance_);
+
         path_sub_ = this->create_subscription<nav_msgs::msg::Path>(
-            "/plan",
+            plan_topic_,
             10,
             std::bind(&RegionDetectorNode::onPath, this, std::placeholders::_1)
         );
+
+        if (!chase_goal_topic_.empty()) {
+            chase_goal_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+                chase_goal_topic_,
+                10,
+                std::bind(&RegionDetectorNode::onChaseGoal, this, std::placeholders::_1)
+            );
+        }
 
         rx_sub_ = this->create_subscription<std_msgs::msg::UInt8MultiArray>(
             "/rm_comm/rx_packet",
@@ -359,32 +377,54 @@ private:
         return false;
     }
 
-    // 路径回调
-    void onPath(const nav_msgs::msg::Path::SharedPtr msg) {
-        last_path_ = *msg;
-        has_path_ = true;
-
-        // 检查路径经过哪些区域
-        path_regions_.clear();
-        path_through_fluctuate_region_ = false;
+    bool updatePathRegions(const nav_msgs::msg::Path& path, std::set<size_t>& path_regions) const {
+        bool path_through_fluctuate = false;
+        path_regions.clear();
         for (size_t i = 0; i < regions_.size(); ++i) {
-            for (const auto& pose: msg->poses) {
+            for (const auto& pose: path.poses) {
                 if (isPointInPolygon(
                         pose.pose.position.x,
                         pose.pose.position.y,
                         regions_[i].polygon
                     ))
                 {
-                    path_regions_.insert(i);
+                    path_regions.insert(i);
                     if (regions_[i].type == REGION_FLUCTUATE) {
-                        path_through_fluctuate_region_ = true;
+                        path_through_fluctuate = true;
                     }
                     break;
                 }
             }
         }
+        return path_through_fluctuate;
+    }
+
+    bool pathMatchesLatestChaseGoal(const nav_msgs::msg::Path& path) const {
+        if (!has_chase_goal_ || path.poses.empty()) {
+            return false;
+        }
+
+        const auto& end = path.poses.back().pose.position;
+        const auto& goal = latest_chase_goal_.pose.position;
+        const double dist = std::hypot(end.x - goal.x, end.y - goal.y);
+        return dist <= chase_plan_goal_tolerance_;
+    }
+
+    // 路径回调
+    void onPath(const nav_msgs::msg::Path::SharedPtr msg) {
+        last_path_ = *msg;
+        has_path_ = true;
+
+        // 普通路径状态仍然跟随 Nav2 的 /plan，用于区域预瞄和通用调试。
+        path_through_fluctuate_region_ = updatePathRegions(*msg, path_regions_);
 
         publishPathThroughFluctuate();
+
+        if (pathMatchesLatestChaseGoal(*msg)) {
+            chase_path_through_fluctuate_region_ =
+                updatePathRegions(*msg, chase_path_regions_);
+            publishChasePathThroughFluctuate();
+        }
 
         if (!path_regions_.empty()) {
             RCLCPP_INFO_THROTTLE(
@@ -397,10 +437,24 @@ private:
         }
     }
 
+    void onChaseGoal(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+        latest_chase_goal_ = *msg;
+        has_chase_goal_ = true;
+        chase_path_regions_.clear();
+        chase_path_through_fluctuate_region_ = false;
+        publishChasePathThroughFluctuate();
+    }
+
     void publishPathThroughFluctuate() {
         std_msgs::msg::Bool msg;
         msg.data = path_through_fluctuate_region_;
         path_through_fluctuate_pub_->publish(msg);
+    }
+
+    void publishChasePathThroughFluctuate() {
+        std_msgs::msg::Bool msg;
+        msg.data = chase_path_through_fluctuate_region_;
+        chase_path_through_fluctuate_pub_->publish(msg);
     }
 
     void onRxPacket(const std_msgs::msg::UInt8MultiArray::SharedPtr msg) {
@@ -567,6 +621,7 @@ private:
         yaw_msg.data = static_cast<float>(yaw_desired);
         yaw_pub_->publish(yaw_msg);
         publishPathThroughFluctuate();
+        publishChasePathThroughFluctuate();
 
         if (has_enemy_pose_) {
             double enemy_map_x = 0.0;
@@ -877,11 +932,13 @@ private:
     rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr region_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr yaw_pub_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr path_through_fluctuate_pub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr chase_path_through_fluctuate_pub_;
     rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr target_region_pub_;
     rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr self_region_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
 
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr chase_goal_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr rx_sub_;
 
     rclcpp::TimerBase::SharedPtr timer_;
@@ -892,6 +949,13 @@ private:
     bool has_path_ { false };
     std::set<size_t> path_regions_; // 路径经过的区域索引
     bool path_through_fluctuate_region_ { false };
+    std::set<size_t> chase_path_regions_;
+    bool chase_path_through_fluctuate_region_ { false };
+    geometry_msgs::msg::PoseStamped latest_chase_goal_;
+    bool has_chase_goal_ { false };
+    std::string plan_topic_ { "/plan" };
+    std::string chase_goal_topic_ { "/chase_goal_pose" };
+    double chase_plan_goal_tolerance_ { 0.75 };
 
     std::vector<std::pair<double, double>> self_base_polygon_;
     std::vector<std::pair<double, double>> central_polygon_;

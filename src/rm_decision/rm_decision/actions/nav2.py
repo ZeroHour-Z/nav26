@@ -44,6 +44,7 @@ class NavigateToPoseAction(py_trees.behaviour.Behaviour):
 		self._x = x
 		self._y = y
 		self._yaw = yaw
+		self._goal_generation = 0
 		self._goal_pub = (
 			self.node.create_publisher(PoseStamped, publish_goal_topic, 10)
 			if publish_goal_topic
@@ -57,6 +58,7 @@ class NavigateToPoseAction(py_trees.behaviour.Behaviour):
 			raise RuntimeError("Nav2 NavigateToPose action server not available")
 
 	def initialise(self) -> None:
+		self._goal_generation += 1
 		self._sent = False
 		self._goal_handle = None
 		self._result_future = None
@@ -83,8 +85,12 @@ class NavigateToPoseAction(py_trees.behaviour.Behaviour):
 				f"{self.name}: sending NavigateToPose goal "
 				f"({goal_msg.pose.pose.position.x:.2f}, {goal_msg.pose.pose.position.y:.2f})"
 			)
+			self._goal_generation += 1
+			generation = self._goal_generation
 			send_future = self.client.send_goal_async(goal_msg)
-			send_future.add_done_callback(self._on_goal_response)
+			send_future.add_done_callback(
+				lambda future, generation=generation: self._on_goal_response(future, generation)
+			)
 			self._sent = True
 			return Status.RUNNING
 
@@ -126,14 +132,24 @@ class NavigateToPoseAction(py_trees.behaviour.Behaviour):
 		return Status.RUNNING
 
 	def terminate(self, new_status: Status) -> None:
+		if new_status == Status.INVALID:
+			self._goal_generation += 1
 		if new_status == Status.INVALID and self.cancel_on_terminate and self._goal_handle is not None:
 			try:
 				self._goal_handle.cancel_goal_async()
 			except Exception as exc:
 				self.node.get_logger().warn(f"Cancel goal failed on terminate: {exc}")
 
-	def _on_goal_response(self, future):
-		self._goal_handle = future.result()
+	def _on_goal_response(self, future, generation: int):
+		goal_handle = future.result()
+		if generation != self._goal_generation:
+			if getattr(goal_handle, 'accepted', False):
+				try:
+					goal_handle.cancel_goal_async()
+				except Exception as exc:
+					self.node.get_logger().warn(f"Cancel stale goal failed: {exc}")
+			return
+		self._goal_handle = goal_handle
 		if not getattr(self._goal_handle, 'accepted', False):
 			self._result_future = None
 			self._goal_rejected = True
