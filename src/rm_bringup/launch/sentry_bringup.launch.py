@@ -100,7 +100,7 @@ def _launch_odin_with_config(context):
             _patch_yaml_dict(data, 'register_keys.custom_map_mode', custom_map_mode)
             _patch_yaml_dict(data, 'register_keys.relocalization_map_abs_path', relocalization_map)
             if run_mode == 'nav':
-                _patch_yaml_dict(data, 'register_keys.use_host_ros_time', 1)
+                _patch_yaml_dict(data, 'register_keys.use_host_ros_time', 0)
 
             patched_text = yaml.dump(data, default_flow_style=False, allow_unicode=True)
             if patched_text == original_text:
@@ -135,7 +135,7 @@ def _launch_odin_with_config(context):
 
     actions.append(LogInfo(msg=f'[sentry_bringup] Odin mode: {odin_mode} (custom_map_mode={custom_map_mode})'))
     if run_mode == 'nav':
-        actions.append(LogInfo(msg='[sentry_bringup] Odin nav timestamp mode: use_host_ros_time=1'))
+        actions.append(LogInfo(msg='[sentry_bringup] Odin nav timestamp mode: use_host_ros_time=0'))
 
     if odin_mode == 'relocalization' and not relocalization_map:
         actions.append(LogInfo(msg='[sentry_bringup] WARNING: odin_mode=relocalization but odin_relocalization_map is empty.'))
