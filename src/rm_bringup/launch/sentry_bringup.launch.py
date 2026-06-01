@@ -277,8 +277,9 @@ def generate_launch_description():
 
     initial_x_arg = DeclareLaunchArgument(
         'initial_x',
-        default_value='10.4365',
-        # default_value='1.9',
+        default_value='10.41',
+        # default_value='10.4365',
+        # default_value='3.0',
         description='初始 X 位置(map坐标系)'
     )
     initial_y_arg = DeclareLaunchArgument(
