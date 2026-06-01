@@ -50,7 +50,7 @@ typedef struct { // 都使用朴素机器人坐标系,前x,左y,上z
     uint8_t point_id; // 巡逻区号
     uint8_t target_region; //敌方车所在的区域
     uint8_t self_region; //自身所在的区域
-    uint8_t reserve_3; // 8位 保留
+    uint8_t reserve_3; // 8位 保留；bit0: fluctuate1/3 与 fluctuate2/4 均无法通过
     uint32_t reserve_4 : 32; // 32位保留
     uint32_t reserve_5 : 32; // 32位保留
     uint32_t reserve_6 : 32; // 32位保留

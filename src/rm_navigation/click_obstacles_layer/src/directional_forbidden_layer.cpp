@@ -16,8 +16,14 @@ void DirectionalForbiddenLayer::onInitialize() {
     declareParameter("goal_topic", rclcpp::ParameterValue(std::string("/goal_pose")));
     declareParameter("plan_topic", rclcpp::ParameterValue(std::string("/plan")));
     declareParameter("min_region_delta_y", rclcpp::ParameterValue(0.10));
+    declareParameter("dwell_timeout_sec", rclcpp::ParameterValue(6.0));
+    declareParameter("dwell_near_distance", rclcpp::ParameterValue(0.35));
+    declareParameter("fallback_clear_timeout_sec", rclcpp::ParameterValue(3.0));
+    declareParameter("route_failed_topic", rclcpp::ParameterValue(std::string("/fluctuate_route_failed")));
     declareParameter("fluctuate_region_1", rclcpp::ParameterValue(std::vector<double> {}));
+    declareParameter("fluctuate_region_2", rclcpp::ParameterValue(std::vector<double> {}));
     declareParameter("fluctuate_region_3", rclcpp::ParameterValue(std::vector<double> {}));
+    declareParameter("fluctuate_region_4", rclcpp::ParameterValue(std::vector<double> {}));
 
     auto node = node_.lock();
     if (!node) {
@@ -28,10 +34,24 @@ void DirectionalForbiddenLayer::onInitialize() {
     (void)node->get_parameter(name_ + ".goal_topic", goal_topic_);
     (void)node->get_parameter(name_ + ".plan_topic", plan_topic_);
     (void)node->get_parameter(name_ + ".min_region_delta_y", min_region_delta_y_);
+    (void)node->get_parameter(name_ + ".dwell_timeout_sec", dwell_timeout_sec_);
+    (void)node->get_parameter(name_ + ".dwell_near_distance", dwell_near_distance_);
+    (void)node->get_parameter(name_ + ".fallback_clear_timeout_sec", fallback_clear_timeout_sec_);
+    (void)node->get_parameter(name_ + ".route_failed_topic", route_failed_topic_);
 
     regions_.clear();
-    (void)loadRegion("fluctuate_region_1", "fluctuate_region_1");
-    (void)loadRegion("fluctuate_region_3", "fluctuate_region_3");
+    if (loadRegion("fluctuate_region_1", "fluctuate_region_1")) {
+        regions_.back().role = RegionRole::OneWayFallback;
+    }
+    if (loadRegion("fluctuate_region_3", "fluctuate_region_3")) {
+        regions_.back().role = RegionRole::OneWayFallback;
+    }
+    if (loadRegion("fluctuate_region_2", "fluctuate_region_2")) {
+        regions_.back().role = RegionRole::PreferredFallback;
+    }
+    if (loadRegion("fluctuate_region_4", "fluctuate_region_4")) {
+        regions_.back().role = RegionRole::PreferredFallback;
+    }
 
     goal_sub_ = node->create_subscription<geometry_msgs::msg::PoseStamped>(
         goal_topic_,
@@ -43,6 +63,11 @@ void DirectionalForbiddenLayer::onInitialize() {
         10,
         std::bind(&DirectionalForbiddenLayer::onPlan, this, std::placeholders::_1)
     );
+    route_failed_pub_ = node->create_publisher<std_msgs::msg::Bool>(
+        route_failed_topic_,
+        rclcpp::QoS(1).transient_local().reliable()
+    );
+    setRouteFailedLocked(false);
 
     current_ = true;
 }
@@ -54,20 +79,23 @@ void DirectionalForbiddenLayer::reset() {}
 void DirectionalForbiddenLayer::onGoal(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
     (void)msg;
     std::lock_guard<std::mutex> lk(mutex_);
-    for (auto& region: regions_) {
-        region.blocked = false;
-    }
+    resetRouteStateLocked();
 }
 
 void DirectionalForbiddenLayer::onPlan(const nav_msgs::msg::Path::SharedPtr msg) {
     auto node = node_.lock();
     std::lock_guard<std::mutex> lk(mutex_);
+    updatePathStateLocked(*msg);
+
     for (auto& region: regions_) {
-        if (region.blocked || !pathHasForbiddenTraversal(*msg, region)) {
+        if (region.role != RegionRole::OneWayFallback || region.blocked || fallback_active_
+            || !pathHasForbiddenTraversal(*msg, region))
+        {
             continue;
         }
 
         region.blocked = true;
+        addExtraBounds(region.min_x, region.min_y, region.max_x, region.max_y);
         if (node) {
             RCLCPP_WARN(
                 node->get_logger(),
@@ -75,6 +103,133 @@ void DirectionalForbiddenLayer::onPlan(const nav_msgs::msg::Path::SharedPtr msg)
                 region.name.c_str()
             );
         }
+    }
+}
+
+void DirectionalForbiddenLayer::resetRouteStateLocked() {
+    for (auto& region: regions_) {
+        region.blocked = false;
+        addExtraBounds(region.min_x, region.min_y, region.max_x, region.max_y);
+    }
+    fallback_active_ = false;
+    dwell_target_ = DwellTarget::None;
+    dwell_timer_active_ = false;
+    clear_timer_active_ = false;
+    path_through_one_way_ = false;
+    path_through_preferred_ = false;
+    setRouteFailedLocked(false);
+}
+
+void DirectionalForbiddenLayer::updateDwellStateLocked(double robot_x, double robot_y) {
+    auto node = node_.lock();
+    if (!node) {
+        return;
+    }
+
+    const bool near_preferred = isNearAnyRegion(robot_x, robot_y, RegionRole::PreferredFallback);
+    const bool near_one_way = isNearAnyRegion(robot_x, robot_y, RegionRole::OneWayFallback);
+
+    DwellTarget target = DwellTarget::None;
+    if (fallback_active_) {
+        if (path_through_one_way_ && near_one_way) {
+            target = DwellTarget::OneWayFallback;
+        }
+    } else if (path_through_preferred_ && near_preferred) {
+        target = DwellTarget::PreferredFallback;
+    }
+
+    const rclcpp::Time now = node->now();
+    if (target == DwellTarget::None) {
+        dwell_target_ = DwellTarget::None;
+        dwell_timer_active_ = false;
+    } else if (!dwell_timer_active_ || target != dwell_target_) {
+        dwell_target_ = target;
+        dwell_started_at_ = now;
+        dwell_timer_active_ = true;
+    } else if ((now - dwell_started_at_).seconds() >= dwell_timeout_sec_) {
+        if (target == DwellTarget::PreferredFallback) {
+            setFallbackActiveLocked(true);
+            dwell_timer_active_ = false;
+        } else if (target == DwellTarget::OneWayFallback) {
+            setRouteFailedLocked(true);
+        }
+    }
+
+    if (fallback_active_ && !path_through_one_way_ && !path_through_preferred_) {
+        if (!clear_timer_active_) {
+            clear_started_at_ = now;
+            clear_timer_active_ = true;
+        } else if ((now - clear_started_at_).seconds() >= fallback_clear_timeout_sec_) {
+            setFallbackActiveLocked(false);
+            setRouteFailedLocked(false);
+            clear_timer_active_ = false;
+        }
+    } else {
+        clear_timer_active_ = false;
+    }
+}
+
+void DirectionalForbiddenLayer::updatePathStateLocked(const nav_msgs::msg::Path& path) {
+    path_through_one_way_ = false;
+    path_through_preferred_ = false;
+
+    for (const auto& region: regions_) {
+        for (const auto& pose: path.poses) {
+            if (!isPointInPolygon(
+                    pose.pose.position.x,
+                    pose.pose.position.y,
+                    region.polygon
+                ))
+            {
+                continue;
+            }
+
+            if (region.role == RegionRole::OneWayFallback) {
+                path_through_one_way_ = true;
+            } else {
+                path_through_preferred_ = true;
+            }
+            break;
+        }
+    }
+}
+
+void DirectionalForbiddenLayer::setFallbackActiveLocked(bool active) {
+    auto node = node_.lock();
+    if (fallback_active_ == active) {
+        return;
+    }
+
+    fallback_active_ = active;
+    for (auto& region: regions_) {
+        if (region.role == RegionRole::OneWayFallback) {
+            region.blocked = false;
+        } else if (region.role == RegionRole::PreferredFallback) {
+            region.blocked = active;
+        }
+        addExtraBounds(region.min_x, region.min_y, region.max_x, region.max_y);
+    }
+
+    if (node) {
+        RCLCPP_WARN(
+            node->get_logger(),
+            "DirectionalForbiddenLayer: fallback route %s; fluctuate2/4=%s, fluctuate1/3 one-way=%s",
+            active ? "enabled" : "cleared",
+            active ? "blocked" : "open",
+            active ? "disabled" : "restored"
+        );
+    }
+}
+
+void DirectionalForbiddenLayer::setRouteFailedLocked(bool failed) {
+    if (route_failed_ == failed && route_failed_pub_) {
+        return;
+    }
+    route_failed_ = failed;
+    if (route_failed_pub_) {
+        std_msgs::msg::Bool msg;
+        msg.data = failed;
+        route_failed_pub_->publish(msg);
     }
 }
 
@@ -157,8 +312,8 @@ bool DirectionalForbiddenLayer::pathHasForbiddenTraversal(
 }
 
 void DirectionalForbiddenLayer::updateBounds(
-    double /*origin_x*/,
-    double /*origin_y*/,
+    double origin_x,
+    double origin_y,
     double /*origin_yaw*/,
     double* min_x,
     double* min_y,
@@ -170,6 +325,8 @@ void DirectionalForbiddenLayer::updateBounds(
     }
 
     std::lock_guard<std::mutex> lk(mutex_);
+    updateDwellStateLocked(origin_x, origin_y);
+    useExtraBounds(min_x, min_y, max_x, max_y);
     for (const auto& region: regions_) {
         if (!region.blocked) {
             continue;
@@ -239,6 +396,50 @@ bool DirectionalForbiddenLayer::isPointInPolygon(
         }
     }
     return inside;
+}
+
+bool DirectionalForbiddenLayer::isNearAnyRegion(double x, double y, RegionRole role) const {
+    for (const auto& region: regions_) {
+        if (region.role != role) {
+            continue;
+        }
+        if (isPointInPolygon(x, y, region.polygon)
+            || distanceToPolygon(x, y, region.polygon) <= dwell_near_distance_)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+double DirectionalForbiddenLayer::distanceToPolygon(
+    double x,
+    double y,
+    const std::vector<std::pair<double, double>>& polygon
+) {
+    if (polygon.size() < 3) {
+        return std::numeric_limits<double>::max();
+    }
+
+    double min_dist = std::numeric_limits<double>::max();
+    const size_t n = polygon.size();
+    for (size_t i = 0; i < n; ++i) {
+        const size_t j = (i + 1) % n;
+        const double x1 = polygon[i].first;
+        const double y1 = polygon[i].second;
+        const double x2 = polygon[j].first;
+        const double y2 = polygon[j].second;
+        const double dx = x2 - x1;
+        const double dy = y2 - y1;
+        const double denom = dx * dx + dy * dy;
+        const double t = denom > 1e-9
+            ? std::max(0.0, std::min(1.0, ((x - x1) * dx + (y - y1) * dy) / denom))
+            : 0.0;
+        const double closest_x = x1 + t * dx;
+        const double closest_y = y1 + t * dy;
+        min_dist = std::min(min_dist, std::hypot(x - closest_x, y - closest_y));
+    }
+    return min_dist;
 }
 
 } // namespace click_obstacles_layer

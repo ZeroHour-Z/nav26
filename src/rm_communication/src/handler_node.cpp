@@ -22,6 +22,7 @@
 #include <rclcpp/parameter_client.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <stdexcept>
+#include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/u_int8.hpp>
@@ -135,6 +136,11 @@ public:
             10,
             std::bind(&HandlerNode::onSelfRegion, this, std::placeholders::_1)
         );
+        fluctuate_route_failed_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+            "/fluctuate_route_failed",
+            rclcpp::QoS(1).transient_local().reliable(),
+            std::bind(&HandlerNode::onFluctuateRouteFailed, this, std::placeholders::_1)
+        );
 
         // 声明参数
         this->declare_parameter<double>("tx_hz", 50.0);
@@ -195,6 +201,10 @@ private:
 
     void onSelfRegion(const std_msgs::msg::UInt8::SharedPtr msg) {
         nav_info_.self_region = msg->data;
+    }
+
+    void onFluctuateRouteFailed(const std_msgs::msg::Bool::SharedPtr msg) {
+        fluctuate_route_failed_ = msg->data;
     }
 
     // 定时从 TF 更新位姿：位置、航向角、角速度估计
@@ -693,6 +703,7 @@ private:
     void publishTxPacket() {
         nav_info_.frame_header = 0x72;
         nav_info_.frame_tail = 0x4D;
+        nav_info_.reserve_3 = fluctuate_route_failed_ ? 0x01 : 0x00;
 
         // 使用 region_detector 发布的区域类型
         // 注意：颠簸区域（fluctuate）对电控上报为 hole，保持行为一致
@@ -717,7 +728,7 @@ private:
             1000,
             "TX -> x_speed: %.3f y_speed: %.3f x_current: %.3f y_current: %.3f "
             "x_target: %.3f y_target: %.3f yaw_current: %.3f yaw_desired: %.3f sentry_region: %d "
-            "target_region: %u self_region: %u",
+            "target_region: %u self_region: %u fluctuate_route_failed: %u",
             nav_info_.x_speed,
             nav_info_.y_speed,
             nav_info_.x_current,
@@ -728,7 +739,8 @@ private:
             nav_info_.yaw_desired,
             nav_info_.sentry_region,
             static_cast<unsigned int>(nav_info_.target_region),
-            static_cast<unsigned int>(nav_info_.self_region)
+            static_cast<unsigned int>(nav_info_.self_region),
+            static_cast<unsigned int>(nav_info_.reserve_3 & 0x01)
         );
 
         std_msgs::msg::UInt8MultiArray out_msg;
@@ -763,6 +775,7 @@ private:
     rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr region_yaw_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr target_region_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr self_region_sub_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr fluctuate_route_failed_sub_;
 
     // 定时器
     rclcpp::TimerBase::SharedPtr tx_timer_;
@@ -794,6 +807,7 @@ private:
     double smoothed_world_vy_ { 0.0 };
     rclcpp::Time last_cmd_filter_time_;
     bool enable_chase_ { true };
+    bool fluctuate_route_failed_ { false };
 
     // BT 节点参数客户端
     std::shared_ptr<rclcpp::SyncParametersClient> bt_param_client_;
